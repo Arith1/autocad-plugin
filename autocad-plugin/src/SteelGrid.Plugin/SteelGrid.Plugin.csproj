@@ -1,0 +1,68 @@
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>SteelGrid.Plugin</RootNamespace>
+    <AssemblyName>SteelGrid.Plugin</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>true</Deterministic>
+    <!-- ACAD_2020_ROOT can override the local install path; the fallback points to this machine. -->
+    <AcadRoot Condition="'$(ACAD_2020_ROOT)' == ''">D:\CAD\AutoCAD\AutoCAD 2020</AcadRoot>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Xml" />
+    <Reference Include="acmgd">
+      <HintPath>$(AcadRoot)\acmgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="acdbmgd">
+      <HintPath>$(AcadRoot)\acdbmgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="accoremgd">
+      <HintPath>$(AcadRoot)\accoremgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SteelGrid.Core\SteelGrid.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Commands\GridPluginCommands.cs" />
+    <Compile Include="Commands\OutlineReader.cs" />
+    <Compile Include="Commands\PluginTableRows.cs" />
+    <Compile Include="Commands\PluginApplication.cs" />
+    <Compile Include="UI\GridSettingsPanel.cs" />
+    <Compile Include="UI\GridSettingsForm.cs" />
+    <Compile Include="UI\GridSettingsData.cs" />
+    <Compile Include="UI\GridSettingsStore.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+
+</Project>

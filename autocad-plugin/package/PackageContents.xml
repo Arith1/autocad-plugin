@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ApplicationPackage
+  SchemaVersion="1.0"
+  AppVersion="0.1.0"
+  Name="SteelGrid Cad Plugin"
+  Description="钢格板自动排条 AutoCAD 插件">
+  <CompanyDetails Name="SteelGrid" />
+  <Components Description="AutoCAD 2020">
+    <RuntimeRequirements OS="Win64" Platform="AutoCAD" SeriesMin="R23.1" SeriesMax="R23.1" />
+    <ComponentEntry AppType="NET" ModuleName="./Contents/SteelGrid.Plugin.dll" AppName="SteelGrid" />
+  </Components>
+</ApplicationPackage>

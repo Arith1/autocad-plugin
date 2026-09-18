@@ -1,0 +1,56 @@
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <LangVersion>7.3</LangVersion>
+    <RootNamespace>SteelGrid.Core</RootNamespace>
+    <AssemblyName>SteelGrid.Core</AssemblyName>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Geometry\GeometryBuilder.cs" />
+    <Compile Include="Geometry\GeometryOutlines.cs" />
+    <Compile Include="Geometry\NotchGeo.cs" />
+    <Compile Include="Geometry\PlateGeometry.cs" />
+    <Compile Include="Geometry\Rect.cs" />
+    <Compile Include="Layout\Bar.cs" />
+    <Compile Include="Layout\LayoutEngine.cs" />
+    <Compile Include="Layout\LayoutResult.cs" />
+    <Compile Include="Layout\Segment.cs" />
+    <Compile Include="Model\BarSpec.cs" />
+    <Compile Include="Model\BarType.cs" />
+    <Compile Include="Model\LoadDirection.cs" />
+    <Compile Include="Model\Notch.cs" />
+    <Compile Include="Model\Spec.cs" />
+    <Compile Include="Model\Validation.cs" />
+    <Compile Include="Report\ReportTables.cs" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+
+</Project>
