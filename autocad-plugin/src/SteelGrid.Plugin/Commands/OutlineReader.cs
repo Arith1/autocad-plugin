@@ -78,16 +78,87 @@ namespace SteelGrid.Plugin.Commands
 
             var runs = ClassifyRuns(BuildRuns(normalized), width, height);
             var notches = new List<Notch>();
-            ReadHorizontalEdge(runs, "top", height, notches);
-            ReadHorizontalEdge(runs, "bottom", height, notches);
-            ReadVerticalEdge(runs, "left", width, notches);
-            ReadVerticalEdge(runs, "right", width, notches);
-            notches.Sort((a, b) =>
+            ReadHorizontalEdge(runs, "top", width, height, notches);
+            ReadHorizontalEdge(runs, "bottom", width, height, notches);
+            ReadVerticalEdge(runs, "left", width, height, notches);
+            ReadVerticalEdge(runs, "right", width, height, notches);
+            return MergeNotches(notches, width, height);
+        }
+
+        private static List<Notch> MergeNotches(List<Notch> notches, double plateW, double plateH)
+        {
+            var merged = new List<Notch>();
+            foreach (var notch in notches)
+            {
+                var key = RectKey(notch, plateW, plateH);
+                var match = merged.Find(item => RectKey(item, plateW, plateH) == key);
+                if (match == null)
+                {
+                    merged.Add(notch);
+                }
+                else
+                {
+                    foreach (var touch in notch.Touches)
+                    {
+                        AddTouch(match, touch);
+                    }
+                }
+            }
+
+            merged.Sort((a, b) =>
             {
                 var result = string.Compare(a.Edge, b.Edge, StringComparison.Ordinal);
                 return result != 0 ? result : a.Start.CompareTo(b.Start);
             });
-            return notches;
+            return merged;
+        }
+
+        private static string RectKey(Notch notch, double plateW, double plateH)
+        {
+            double x0;
+            double y0;
+            double x1;
+            double y1;
+            switch (notch.Edge)
+            {
+                case "top":
+                    x0 = notch.Start;
+                    x1 = notch.Start + notch.Width;
+                    y0 = 0.0;
+                    y1 = notch.Depth;
+                    break;
+                case "bottom":
+                    x0 = notch.Start;
+                    x1 = notch.Start + notch.Width;
+                    y0 = plateH - notch.Depth;
+                    y1 = plateH;
+                    break;
+                case "left":
+                    x0 = 0.0;
+                    x1 = notch.Depth;
+                    y0 = notch.Start;
+                    y1 = notch.Start + notch.Width;
+                    break;
+                default:
+                    x0 = plateW - notch.Depth;
+                    x1 = plateW;
+                    y0 = notch.Start;
+                    y1 = notch.Start + notch.Width;
+                    break;
+            }
+
+            return Math.Round(x0, 3).ToString("R") + "|"
+                   + Math.Round(y0, 3).ToString("R") + "|"
+                   + Math.Round(x1, 3).ToString("R") + "|"
+                   + Math.Round(y1, 3).ToString("R");
+        }
+
+        private static void AddTouch(Notch notch, string edge)
+        {
+            if (edge != null && !notch.Touches.Contains(edge))
+            {
+                notch.Touches.Add(edge);
+            }
         }
 
         private static double Distance(Point2d left, Point2d right)
@@ -169,14 +240,34 @@ namespace SteelGrid.Plugin.Commands
             return result;
         }
 
-        private static void ReadHorizontalEdge(List<Run> runs, string edge, double height, List<Notch> notches)
+        private static void ReadHorizontalEdge(List<Run> runs, string edge, double width, double height, List<Notch> notches)
         {
             var outer = runs.FindAll(run => run.Kind == edge);
             outer.Sort((a, b) => a.LoX.CompareTo(b.LoX));
-            for (var i = 0; i < outer.Count - 1; i++)
+
+            var spans = new List<Tuple<double, double>>();
+            var start = 0.0;
+            for (var i = 0; i < outer.Count; i++)
             {
-                var lo = outer[i].HiX;
-                var hi = outer[i + 1].LoX;
+                var item = outer[i];
+                if (item.LoX > start + Eps)
+                {
+                    spans.Add(Tuple.Create(start, item.LoX));
+                }
+
+                start = Math.Max(start, item.HiX);
+            }
+
+            var spanW = width;
+            if (start < spanW - Eps)
+            {
+                spans.Add(Tuple.Create(start, spanW));
+            }
+
+            foreach (var item in spans)
+            {
+                var lo = item.Item1;
+                var hi = item.Item2;
                 Run inner;
                 if (hi <= lo + Eps || !TryFindRun(runs, "inner_h", lo, hi, out inner))
                 {
@@ -185,18 +276,40 @@ namespace SteelGrid.Plugin.Commands
 
                 var middleY = (inner.Start.Y + inner.End.Y) / 2.0;
                 var depth = edge == "top" ? middleY : height - middleY;
-                notches.Add(new Notch(edge, lo, hi - lo, depth));
+                var notch = new Notch(edge, lo, hi - lo, depth);
+                notch.Touches.Add(edge);
+                notches.Add(notch);
             }
         }
 
-        private static void ReadVerticalEdge(List<Run> runs, string edge, double width, List<Notch> notches)
+        private static void ReadVerticalEdge(List<Run> runs, string edge, double width, double height, List<Notch> notches)
         {
             var outer = runs.FindAll(run => run.Kind == edge);
             outer.Sort((a, b) => a.LoY.CompareTo(b.LoY));
-            for (var i = 0; i < outer.Count - 1; i++)
+
+            var spans = new List<Tuple<double, double>>();
+            var start = 0.0;
+            for (var i = 0; i < outer.Count; i++)
             {
-                var lo = outer[i].HiY;
-                var hi = outer[i + 1].LoY;
+                var item = outer[i];
+                if (item.LoY > start + Eps)
+                {
+                    spans.Add(Tuple.Create(start, item.LoY));
+                }
+
+                start = Math.Max(start, item.HiY);
+            }
+
+            var spanH = height;
+            if (start < spanH - Eps)
+            {
+                spans.Add(Tuple.Create(start, spanH));
+            }
+
+            foreach (var item in spans)
+            {
+                var lo = item.Item1;
+                var hi = item.Item2;
                 Run inner;
                 if (hi <= lo + Eps || !TryFindRun(runs, "inner_v", lo, hi, out inner))
                 {
@@ -205,7 +318,15 @@ namespace SteelGrid.Plugin.Commands
 
                 var middleX = (inner.Start.X + inner.End.X) / 2.0;
                 var depth = edge == "left" ? middleX : width - middleX;
-                notches.Add(new Notch(edge, lo, hi - lo, depth));
+                // 角部空洞已由水平边识别，垂直边检测只保留不贴顶/底边的左/右空洞。
+                if (lo <= Eps || hi >= height - Eps)
+                {
+                    continue;
+                }
+
+                var notch = new Notch(edge, lo, hi - lo, depth);
+                notch.Touches.Add(edge);
+                notches.Add(notch);
             }
         }
 

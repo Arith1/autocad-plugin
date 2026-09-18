@@ -124,171 +124,16 @@ namespace SteelGrid.Core.Report
 
         public static List<ReportItem> FrameTable(LayoutResult result)
         {
-            var geo = result.Geometry;
-            var spec = result.Spec;
-            var t = spec.FrameT;
-            var w = geo.Plate.W;
-            var h = geo.Plate.H;
+            return FrameTable(result, FrameSplitter.GetPieces(result.Geometry));
+        }
+
+        public static List<ReportItem> FrameTable(LayoutResult result, List<FramePiece> framePieces)
+        {
             var counts = new Dictionary<string, int>();
             var order = new List<ReportItem>();
-
-            var topNotches = new List<NotchGeo>();
-            var bottomNotches = new List<NotchGeo>();
-            var leftNotches = new List<NotchGeo>();
-            var rightNotches = new List<NotchGeo>();
-            foreach (var notch in geo.Notches)
+            foreach (var piece in framePieces)
             {
-                if (notch.Source.Edge == "top")
-                {
-                    topNotches.Add(notch);
-                }
-                else if (notch.Source.Edge == "bottom")
-                {
-                    bottomNotches.Add(notch);
-                }
-                else if (notch.Source.Edge == "left")
-                {
-                    leftNotches.Add(notch);
-                }
-                else if (notch.Source.Edge == "right")
-                {
-                    rightNotches.Add(notch);
-                }
-            }
-
-            // 受力方向垂直：上下水平边包住左右垂直边。
-            // 受力方向水平：左右垂直边包住上下水平边。
-            var primaryIsHorizontal = spec.LoadDirection == LoadDirection.Vertical;
-            var primaryBands = primaryIsHorizontal
-                ? new[]
-                {
-                    new Tuple<string, Segment, List<NotchGeo>>("top", new Segment(0.0, t), topNotches),
-                    new Tuple<string, Segment, List<NotchGeo>>("bottom", new Segment(h - t, h), bottomNotches)
-                }
-                : new[]
-                {
-                    new Tuple<string, Segment, List<NotchGeo>>("left", new Segment(0.0, t), leftNotches),
-                    new Tuple<string, Segment, List<NotchGeo>>("right", new Segment(w - t, w), rightNotches)
-                };
-
-            var secondaryBands = primaryIsHorizontal
-                ? new[]
-                {
-                    new Tuple<string, Segment, List<NotchGeo>>("left", new Segment(0.0, t), leftNotches),
-                    new Tuple<string, Segment, List<NotchGeo>>("right", new Segment(w - t, w), rightNotches)
-                }
-                : new[]
-                {
-                    new Tuple<string, Segment, List<NotchGeo>>("top", new Segment(0.0, t), topNotches),
-                    new Tuple<string, Segment, List<NotchGeo>>("bottom", new Segment(h - t, h), bottomNotches)
-                };
-
-            foreach (var band in primaryBands)
-            {
-                var cuts = new List<Segment>();
-                foreach (var notch in band.Item3)
-                {
-                    if (primaryIsHorizontal)
-                    {
-                        cuts.Add(new Segment(notch.Clear.X0, notch.Clear.X1));
-                    }
-                    else
-                    {
-                        cuts.Add(new Segment(notch.Clear.Y0, notch.Clear.Y1));
-                    }
-                }
-
-                Segment[] spans;
-                string direction;
-                if (primaryIsHorizontal)
-                {
-                    spans = SubtractSpans(0.0, w, cuts).ToArray();
-                    direction = "横向";
-                }
-                else
-                {
-                    spans = SubtractSpans(0.0, h, cuts).ToArray();
-                    direction = "纵向";
-                }
-
-                foreach (var span in spans)
-                {
-                    AddFramePiece(counts, order, direction, span.Length);
-                }
-            }
-
-            foreach (var band in secondaryBands)
-            {
-                var cuts = new List<Segment>();
-                foreach (var notch in band.Item3)
-                {
-                    if (primaryIsHorizontal)
-                    {
-                        cuts.Add(new Segment(notch.Clear.Y0, notch.Clear.Y1));
-                    }
-                    else
-                    {
-                        cuts.Add(new Segment(notch.Clear.X0 - t, notch.Clear.X1 + t));
-                    }
-                }
-
-                Segment[] spans;
-                string direction;
-                if (primaryIsHorizontal)
-                {
-                    spans = SubtractSpans(t, h - t, cuts).ToArray();
-                    direction = "纵向";
-                }
-                else
-                {
-                    spans = SubtractSpans(t, w - t, cuts).ToArray();
-                    direction = "横向";
-                }
-
-                foreach (var span in spans)
-                {
-                    AddFramePiece(counts, order, direction, span.Length);
-                }
-            }
-
-            foreach (var notch in topNotches)
-            {
-                var side = spec.LoadDirection == LoadDirection.Vertical
-                    ? notch.Source.Depth - t
-                    : notch.Source.Depth + t;
-                var cap = spec.LoadDirection == LoadDirection.Vertical
-                    ? notch.Clear.W + 2 * t
-                    : notch.Clear.W;
-                AddFramePiece(counts, order, "纵向", side);
-                AddFramePiece(counts, order, "纵向", side);
-                AddFramePiece(counts, order, "横向", cap);
-            }
-
-            foreach (var notch in bottomNotches)
-            {
-                var side = spec.LoadDirection == LoadDirection.Vertical
-                    ? notch.Source.Depth - t
-                    : notch.Source.Depth + t;
-                var cap = spec.LoadDirection == LoadDirection.Vertical
-                    ? notch.Clear.W + 2 * t
-                    : notch.Clear.W;
-                AddFramePiece(counts, order, "纵向", side);
-                AddFramePiece(counts, order, "纵向", side);
-                AddFramePiece(counts, order, "横向", cap);
-            }
-
-            foreach (var notch in leftNotches)
-            {
-                AddFramePiece(counts, order, "横向", notch.Source.Depth);
-                AddFramePiece(counts, order, "横向", notch.Source.Depth);
-                AddFramePiece(counts, order, "纵向", notch.Clear.H);
-            }
-
-            foreach (var notch in rightNotches)
-            {
-                AddFramePiece(counts, order, "横向", notch.Source.Depth);
-                AddFramePiece(counts, order, "横向", notch.Source.Depth);
-                AddFramePiece(counts, order, "纵向", notch.Clear.H);
+                AddFramePiece(counts, order, piece.Direction, piece.Rect.W > piece.Rect.H ? piece.Rect.W : piece.Rect.H);
             }
 
             var items = new List<ReportItem>();
@@ -504,37 +349,6 @@ namespace SteelGrid.Core.Report
             }
 
             counts[key]++;
-        }
-
-        private static List<Segment> SubtractSpans(double start, double end, List<Segment> cuts)
-        {
-            var spans = new List<Segment> { new Segment(start, end) };
-            foreach (var cut in cuts)
-            {
-                var nextSpans = new List<Segment>();
-                foreach (var span in spans)
-                {
-                    if (span.B <= cut.A || span.A >= cut.B)
-                    {
-                        nextSpans.Add(span);
-                        continue;
-                    }
-
-                    if (span.A < cut.A)
-                    {
-                        nextSpans.Add(new Segment(span.A, cut.A));
-                    }
-
-                    if (cut.B < span.B)
-                    {
-                        nextSpans.Add(new Segment(cut.B, span.B));
-                    }
-                }
-
-                spans = nextSpans;
-            }
-
-            return spans;
         }
 
         private static string JoinNumbers(List<Variant> variants, bool first)

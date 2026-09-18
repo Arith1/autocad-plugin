@@ -35,6 +35,7 @@
   <ItemGroup>
     <Compile Include="Geometry\GeometryBuilder.cs" />
     <Compile Include="Geometry\GeometryOutlines.cs" />
+    <Compile Include="Geometry\FrameSplitter.cs" />
     <Compile Include="Geometry\NotchGeo.cs" />
     <Compile Include="Geometry\PlateGeometry.cs" />
     <Compile Include="Geometry\Rect.cs" />

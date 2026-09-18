@@ -28,7 +28,7 @@ namespace SteelGrid.Plugin.Commands
         public static void ShowInfo()
         {
             var editor = GetEditor();
-            editor.WriteMessage("\n钢格板自动排条插件 v0.16：支持扁钢 / 扭绞方钢。");
+            editor.WriteMessage("\n钢格板自动排条插件 v0.17：支持凹口、缺角和凸出图形（外接矩形 − 矩形空洞）。");
         }
 
         [CommandMethod("GPGRIDSET")]
@@ -198,7 +198,29 @@ namespace SteelGrid.Plugin.Commands
             var plateHeight = result.Geometry.Plate.H;
 
             // 边框按受力方向拆成独立边框料，能看出哪条边包住哪条边。
-            var frameCount = DrawFramePieces(modelSpace, transaction, result, insertionPoint, plateHeight);
+            var framePieces = FrameSplitter.GetPieces(result.Geometry);
+            var frameCount = DrawFramePieces(
+                modelSpace,
+                transaction,
+                framePieces,
+                insertionPoint,
+                plateHeight);
+
+            var plateOutline = CreateOutlinePolyline(
+                GeometryOutlines.PlateOutline(result.Geometry),
+                insertionPoint,
+                plateHeight,
+                "外轮廓");
+            modelSpace.AppendEntity(plateOutline);
+            transaction.AddNewlyCreatedDBObject(plateOutline, true);
+
+            var netOutline = CreateOutlinePolyline(
+                GeometryOutlines.NetOutline(result.Geometry),
+                insertionPoint,
+                plateHeight,
+                "内边框");
+            modelSpace.AppendEntity(netOutline);
+            transaction.AddNewlyCreatedDBObject(netOutline, true);
 
             // 外边框的每一段都标注尺寸，含缺口侧边和封头边。
             DrawBorderDimensions(
@@ -388,8 +410,8 @@ namespace SteelGrid.Plugin.Commands
                 transaction,
                 tableLeft,
                 insertionPoint.Y,
-                ReportTables.FrameTable(result),
-                "边框下料（共 " + ReportTables.FrameTable(result).Sum(item => item.Count) + " 根）");
+                ReportTables.FrameTable(result, framePieces),
+                "边框下料（共 " + ReportTables.FrameTable(result, framePieces).Sum(item => item.Count) + " 根）");
             tableBottom = DrawTable(
                 modelSpace,
                 transaction,
@@ -423,241 +445,31 @@ namespace SteelGrid.Plugin.Commands
         private static int DrawFramePieces(
             BlockTableRecord modelSpace,
             Transaction transaction,
-            LayoutResult result,
+            List<FramePiece> framePieces,
             Point3d insertionPoint,
             double plateHeight)
         {
-            var t = result.Spec.FrameT;
-            var plate = result.Geometry.Plate;
-            var w = plate.W;
-            var h = plate.H;
-            var rects = new List<Rect>();
-
-            var topNotches = new List<NotchGeo>();
-            var bottomNotches = new List<NotchGeo>();
-            var leftNotches = new List<NotchGeo>();
-            var rightNotches = new List<NotchGeo>();
-            foreach (var notch in result.Geometry.Notches)
-            {
-                if (notch.Source.Edge == "top")
-                {
-                    topNotches.Add(notch);
-                }
-                else if (notch.Source.Edge == "bottom")
-                {
-                    bottomNotches.Add(notch);
-                }
-                else if (notch.Source.Edge == "left")
-                {
-                    leftNotches.Add(notch);
-                }
-                else if (notch.Source.Edge == "right")
-                {
-                    rightNotches.Add(notch);
-                }
-            }
-
-            var verticalForce = result.Spec.LoadDirection == LoadDirection.Vertical;
-            if (verticalForce)
-            {
-                var topSpans = SubtractSpans(
-                    0.0,
-                    w,
-                    topNotches.Select(item => new Segment(item.Clear.X0, item.Clear.X1)).ToList());
-                foreach (var span in topSpans)
-                {
-                    rects.Add(new Rect(span.A, 0.0, span.B, t));
-                }
-
-                var bottomSpans = SubtractSpans(
-                    0.0,
-                    w,
-                    bottomNotches.Select(item => new Segment(item.Clear.X0, item.Clear.X1)).ToList());
-                foreach (var span in bottomSpans)
-                {
-                    rects.Add(new Rect(span.A, h - t, span.B, h));
-                }
-
-                var leftSpans = SubtractSpans(
-                    t,
-                    h - t,
-                    leftNotches.Select(item => new Segment(item.Clear.Y0, item.Clear.Y1)).ToList());
-                foreach (var span in leftSpans)
-                {
-                    rects.Add(new Rect(0.0, span.A, t, span.B));
-                }
-
-                var rightSpans = SubtractSpans(
-                    t,
-                    h - t,
-                    rightNotches.Select(item => new Segment(item.Clear.Y0, item.Clear.Y1)).ToList());
-                foreach (var span in rightSpans)
-                {
-                    rects.Add(new Rect(w - t, span.A, w, span.B));
-                }
-            }
-            else
-            {
-                var leftSpans = SubtractSpans(
-                    0.0,
-                    h,
-                    leftNotches.Select(item => new Segment(item.Clear.Y0, item.Clear.Y1)).ToList());
-                foreach (var span in leftSpans)
-                {
-                    rects.Add(new Rect(0.0, span.A, t, span.B));
-                }
-
-                var rightSpans = SubtractSpans(
-                    0.0,
-                    h,
-                    rightNotches.Select(item => new Segment(item.Clear.Y0, item.Clear.Y1)).ToList());
-                foreach (var span in rightSpans)
-                {
-                    rects.Add(new Rect(w - t, span.A, w, span.B));
-                }
-
-                var topSpans = SubtractSpans(
-                    t,
-                    w - t,
-                    topNotches.Select(item => new Segment(item.Clear.X0 - t, item.Clear.X1 + t)).ToList());
-                foreach (var span in topSpans)
-                {
-                    rects.Add(new Rect(span.A, 0.0, span.B, t));
-                }
-
-                var bottomSpans = SubtractSpans(
-                    t,
-                    w - t,
-                    bottomNotches.Select(item => new Segment(item.Clear.X0 - t, item.Clear.X1 + t)).ToList());
-                foreach (var span in bottomSpans)
-                {
-                    rects.Add(new Rect(span.A, h - t, span.B, h));
-                }
-            }
-
-            foreach (var notch in topNotches)
-            {
-                var x0 = notch.Clear.X0;
-                var x1 = notch.Clear.X1;
-                var depth = notch.Clear.H;
-                if (verticalForce)
-                {
-                    rects.Add(new Rect(x0 - t, t, x0, depth));
-                    rects.Add(new Rect(x1, t, x1 + t, depth));
-                }
-                else
-                {
-                    rects.Add(new Rect(x0 - t, 0.0, x0, depth + t));
-                    rects.Add(new Rect(x1, 0.0, x1 + t, depth + t));
-                }
-
-                if (verticalForce)
-                {
-                    rects.Add(new Rect(x0 - t, depth, x1 + t, depth + t));
-                }
-                else
-                {
-                    rects.Add(new Rect(x0, depth, x1, depth + t));
-                }
-            }
-
-            foreach (var notch in bottomNotches)
-            {
-                var x0 = notch.Clear.X0;
-                var x1 = notch.Clear.X1;
-                var depth = notch.Clear.H;
-                if (verticalForce)
-                {
-                    rects.Add(new Rect(x0 - t, h - depth, x0, h - t));
-                    rects.Add(new Rect(x1, h - depth, x1 + t, h - t));
-                }
-                else
-                {
-                    rects.Add(new Rect(x0 - t, h - depth - t, x0, h - depth));
-                    rects.Add(new Rect(x1, h - depth - t, x1 + t, h - depth));
-                }
-
-                if (verticalForce)
-                {
-                    rects.Add(new Rect(x0 - t, h - depth - t, x1 + t, h - depth));
-                }
-                else
-                {
-                    rects.Add(new Rect(x0, h - depth - t, x1, h - depth));
-                }
-            }
-
-            foreach (var notch in leftNotches)
-            {
-                var y0 = notch.Clear.Y0;
-                var y1 = notch.Clear.Y1;
-                var depth = notch.Clear.W;
-                rects.Add(new Rect(depth, y0, depth + t, y1));
-                rects.Add(new Rect(0.0, y0 - t, depth, y0));
-                rects.Add(new Rect(0.0, y1, depth, y1 + t));
-            }
-
-            foreach (var notch in rightNotches)
-            {
-                var y0 = notch.Clear.Y0;
-                var y1 = notch.Clear.Y1;
-                var depth = notch.Clear.W;
-                rects.Add(new Rect(w - depth - t, y0, w - depth, y1));
-                rects.Add(new Rect(w - depth, y0 - t, w, y0));
-                rects.Add(new Rect(w - depth, y1, w, y1 + t));
-            }
-
             var drawn = 0;
-            foreach (var rect in rects)
+            foreach (var piece in framePieces)
             {
+                var rect = piece.Rect;
                 if (rect.W <= 0.0 || rect.H <= 0.0)
                 {
                     continue;
                 }
 
                 drawn++;
-                var piece = CreateRectangle(
+                var entity = CreateRectangle(
                     insertionPoint.X + rect.X0,
                     ToCadY(insertionPoint.Y, plateHeight, rect.Y1),
                     rect.W,
                     rect.H,
                     "外轮廓");
-                modelSpace.AppendEntity(piece);
-                transaction.AddNewlyCreatedDBObject(piece, true);
+                modelSpace.AppendEntity(entity);
+                transaction.AddNewlyCreatedDBObject(entity, true);
             }
 
             return drawn;
-        }
-
-        private static List<Segment> SubtractSpans(double start, double end, List<Segment> cuts)
-        {
-            var spans = new List<Segment> { new Segment(start, end) };
-            foreach (var cut in cuts)
-            {
-                var nextSpans = new List<Segment>();
-                foreach (var span in spans)
-                {
-                    if (span.B <= cut.A || span.A >= cut.B)
-                    {
-                        nextSpans.Add(span);
-                        continue;
-                    }
-
-                    if (span.A < cut.A)
-                    {
-                        nextSpans.Add(new Segment(span.A, cut.A));
-                    }
-
-                    if (cut.B < span.B)
-                    {
-                        nextSpans.Add(new Segment(cut.B, span.B));
-                    }
-                }
-
-                spans = nextSpans;
-            }
-
-            return spans;
         }
 
         private struct WallSegment
@@ -687,27 +499,60 @@ namespace SteelGrid.Plugin.Commands
                 var edge = notch.Source.Edge;
                 if (edge == "top")
                 {
-                    walls.Add(new WallSegment(c.X0, 0.0, c.X0, c.H));
-                    walls.Add(new WallSegment(c.X1, c.H, c.X1, 0.0));
+                    if (!Touches(notch, "left"))
+                    {
+                        walls.Add(new WallSegment(c.X0, 0.0, c.X0, c.H));
+                    }
+
+                    if (!Touches(notch, "right"))
+                    {
+                        walls.Add(new WallSegment(c.X1, c.H, c.X1, 0.0));
+                    }
                 }
                 else if (edge == "bottom")
                 {
-                    walls.Add(new WallSegment(c.X0, h, c.X0, h - c.H));
-                    walls.Add(new WallSegment(c.X1, h - c.H, c.X1, h));
+                    if (!Touches(notch, "left"))
+                    {
+                        walls.Add(new WallSegment(c.X0, h, c.X0, h - c.H));
+                    }
+
+                    if (!Touches(notch, "right"))
+                    {
+                        walls.Add(new WallSegment(c.X1, h - c.H, c.X1, h));
+                    }
                 }
                 else if (edge == "left")
                 {
-                    walls.Add(new WallSegment(0.0, c.Y0, c.W, c.Y0));
-                    walls.Add(new WallSegment(0.0, c.Y1, c.W, c.Y1));
+                    if (!Touches(notch, "top"))
+                    {
+                        walls.Add(new WallSegment(0.0, c.Y0, c.W, c.Y0));
+                    }
+
+                    if (!Touches(notch, "bottom"))
+                    {
+                        walls.Add(new WallSegment(0.0, c.Y1, c.W, c.Y1));
+                    }
                 }
-                else if (edge == "right")
+                else
                 {
-                    walls.Add(new WallSegment(w - c.W, c.Y0, w, c.Y0));
-                    walls.Add(new WallSegment(w - c.W, c.Y1, w, c.Y1));
+                    if (!Touches(notch, "top"))
+                    {
+                        walls.Add(new WallSegment(w - c.W, c.Y0, w, c.Y0));
+                    }
+
+                    if (!Touches(notch, "bottom"))
+                    {
+                        walls.Add(new WallSegment(w - c.W, c.Y1, w, c.Y1));
+                    }
                 }
             }
 
             return walls;
+        }
+
+        private static bool Touches(NotchGeo notch, string edge)
+        {
+            return notch.Touches.Contains(edge);
         }
 
         private static bool IsNotchWall(List<WallSegment> walls, double x0, double y0, double x1, double y1)

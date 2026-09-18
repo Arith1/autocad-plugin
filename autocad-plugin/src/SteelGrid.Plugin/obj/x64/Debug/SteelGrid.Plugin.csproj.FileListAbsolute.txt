@@ -55,3 +55,7 @@ F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin
 F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Debug-v36\SteelGrid.Plugin.pdb
 F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Debug-v36\SteelGrid.Core.dll
 F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Debug-v36\SteelGrid.Core.pdb
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Debug-v17\SteelGrid.Plugin.dll
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Debug-v17\SteelGrid.Plugin.pdb
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Debug-v17\SteelGrid.Core.dll
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Debug-v17\SteelGrid.Core.pdb

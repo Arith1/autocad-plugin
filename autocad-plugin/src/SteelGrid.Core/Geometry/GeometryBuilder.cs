@@ -36,15 +36,17 @@ namespace SteelGrid.Core.Geometry
                     var x1 = notch.Start + notch.Width;
                     var y0 = edge == "top" ? 0.0 : h - notch.Depth;
                     var y1 = edge == "top" ? notch.Depth : h;
-                    var y0Frame = edge == "top" ? 0.0 : h - notch.Depth - spec.FrameT;
-                    var y1Frame = edge == "top" ? notch.Depth + spec.FrameT : h;
 
                     var clear = AsPlateRect(new Rect(x0, y0, x1, y1), w, h);
                     var frame = AsPlateRect(
-                        new Rect(x0 - spec.FrameT, y0Frame, x1 + spec.FrameT, y1Frame),
+                        new Rect(
+                            x0 - spec.FrameT,
+                            y0 - spec.FrameT,
+                            x1 + spec.FrameT,
+                            y1 + spec.FrameT),
                         w,
                         h);
-                    geos.Add(new NotchGeo(notch, clear, frame));
+                    geos.Add(new NotchGeo(notch, clear, frame, EdgeTouches(clear, plate)));
                 }
                 else if (edge == "left" || edge == "right")
                 {
@@ -52,15 +54,17 @@ namespace SteelGrid.Core.Geometry
                     var y1 = notch.Start + notch.Width;
                     var x0 = edge == "left" ? 0.0 : w - notch.Depth;
                     var x1 = edge == "left" ? notch.Depth : w;
-                    var x0Frame = edge == "left" ? 0.0 : w - notch.Depth - spec.FrameT;
-                    var x1Frame = edge == "left" ? notch.Depth + spec.FrameT : w;
 
                     var clear = AsPlateRect(new Rect(x0, y0, x1, y1), w, h);
                     var frame = AsPlateRect(
-                        new Rect(x0Frame, y0 - spec.FrameT, x1Frame, y1 + spec.FrameT),
+                        new Rect(
+                            x0 - spec.FrameT,
+                            y0 - spec.FrameT,
+                            x1 + spec.FrameT,
+                            y1 + spec.FrameT),
                         w,
                         h);
-                    geos.Add(new NotchGeo(notch, clear, frame));
+                    geos.Add(new NotchGeo(notch, clear, frame, EdgeTouches(clear, plate)));
                 }
                 else
                 {
@@ -83,30 +87,30 @@ namespace SteelGrid.Core.Geometry
             return clipped;
         }
 
-        private static int EdgeTouchCount(Rect rect, Rect plate)
+        private static List<string> EdgeTouches(Rect rect, Rect plate)
         {
-            var count = 0;
+            var touches = new List<string>();
             if (Math.Abs(rect.X0 - plate.X0) <= Eps)
             {
-                count++;
+                touches.Add("left");
             }
 
             if (Math.Abs(rect.X1 - plate.X1) <= Eps)
             {
-                count++;
+                touches.Add("right");
             }
 
             if (Math.Abs(rect.Y0 - plate.Y0) <= Eps)
             {
-                count++;
+                touches.Add("top");
             }
 
             if (Math.Abs(rect.Y1 - plate.Y1) <= Eps)
             {
-                count++;
+                touches.Add("bottom");
             }
 
-            return count;
+            return touches;
         }
 
         private static void ValidateGeometry(Rect plate, Rect net, List<NotchGeo> notches)
@@ -114,9 +118,10 @@ namespace SteelGrid.Core.Geometry
             for (var i = 0; i < notches.Count; i++)
             {
                 var item = notches[i];
-                if (EdgeTouchCount(item.Frame, plate) > 1)
+                var touches = EdgeTouches(item.Frame, plate);
+                if (touches.Count > 2)
                 {
-                    throw new ArgumentException($"第 {i + 1} 个缺口跨过板角或贯穿板件，当前版本不支持");
+                    throw new ArgumentException($"第 {i + 1} 个空洞贯穿板件，当前版本不支持");
                 }
 
                 if (!net.Intersects(item.Frame) && !item.Frame.Intersects(net))

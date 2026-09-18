@@ -168,12 +168,12 @@ namespace SteelGrid.Core.Layout
 
             foreach (var notch in geo.Notches)
             {
-                if (notch.Source.Edge == "top"
+                if (Touches(notch, "top")
                     && NearInterval(band, notch.Frame.X0, notch.Frame.X1, geo.Spec.FrameT))
                 {
                     segments = TruncateStart(segments, notch.Frame.Y1);
                 }
-                else if (notch.Source.Edge == "bottom"
+                else if (Touches(notch, "bottom")
                          && NearInterval(band, notch.Frame.X0, notch.Frame.X1, geo.Spec.FrameT))
                 {
                     segments = TruncateEnd(segments, notch.Frame.Y0);
@@ -182,12 +182,12 @@ namespace SteelGrid.Core.Layout
 
             foreach (var notch in geo.Notches)
             {
-                if (notch.Source.Edge == "left"
+                if (Touches(notch, "left")
                     && NearInterval(band, notch.Frame.X0, notch.Frame.X1, geo.Spec.FrameT))
                 {
                     segments = SubtractInterval(segments, notch.Frame.Y0, notch.Frame.Y1);
                 }
-                else if (notch.Source.Edge == "right"
+                else if (Touches(notch, "right")
                          && NearInterval(band, notch.Frame.X0, notch.Frame.X1, geo.Spec.FrameT))
                 {
                     segments = SubtractInterval(segments, notch.Frame.Y0, notch.Frame.Y1);
@@ -205,12 +205,12 @@ namespace SteelGrid.Core.Layout
 
             foreach (var notch in geo.Notches)
             {
-                if (notch.Source.Edge == "left"
+                if (Touches(notch, "left")
                     && NearInterval(band, notch.Frame.Y0, notch.Frame.Y1, geo.Spec.FrameT))
                 {
                     segments = TruncateStart(segments, notch.Frame.X1);
                 }
-                else if (notch.Source.Edge == "right"
+                else if (Touches(notch, "right")
                          && NearInterval(band, notch.Frame.Y0, notch.Frame.Y1, geo.Spec.FrameT))
                 {
                     segments = TruncateEnd(segments, notch.Frame.X0);
@@ -219,12 +219,12 @@ namespace SteelGrid.Core.Layout
 
             foreach (var notch in geo.Notches)
             {
-                if (notch.Source.Edge == "top"
+                if (Touches(notch, "top")
                     && NearInterval(band, notch.Frame.Y0, notch.Frame.Y1, geo.Spec.FrameT))
                 {
                     segments = SubtractInterval(segments, notch.Frame.X0, notch.Frame.X1);
                 }
-                else if (notch.Source.Edge == "bottom"
+                else if (Touches(notch, "bottom")
                          && NearInterval(band, notch.Frame.Y0, notch.Frame.Y1, geo.Spec.FrameT))
                 {
                     segments = SubtractInterval(segments, notch.Frame.X0, notch.Frame.X1);
@@ -261,55 +261,64 @@ namespace SteelGrid.Core.Layout
 
             foreach (var notch in geo.Notches)
             {
-                bool nearEdge;
-                bool crosses;
-                string action;
-                if (bar.Orientation == "vertical")
+                foreach (var edge in notch.Touches)
                 {
-                    nearEdge = (notch.Source.Edge == "top" || notch.Source.Edge == "bottom")
-                               && NearInterval(
-                                   Band(bar.Center, bar.Thickness),
-                                   notch.Frame.X0,
-                                   notch.Frame.X1,
-                                   clearance);
-                    crosses = (notch.Source.Edge == "left" || notch.Source.Edge == "right")
-                              && NearInterval(
-                                  Band(bar.Center, bar.Thickness),
-                                  notch.Frame.X0,
-                                  notch.Frame.X1,
-                                  clearance);
-                    action = notch.Source.Edge == "top" || notch.Source.Edge == "bottom"
-                        ? "截短"
-                        : "分段";
-                }
-                else
-                {
-                    nearEdge = (notch.Source.Edge == "left" || notch.Source.Edge == "right")
-                               && NearInterval(
-                                   Band(bar.Center, bar.Thickness),
-                                   notch.Frame.Y0,
-                                   notch.Frame.Y1,
-                                   clearance);
-                    crosses = (notch.Source.Edge == "top" || notch.Source.Edge == "bottom")
-                              && NearInterval(
-                                  Band(bar.Center, bar.Thickness),
-                                  notch.Frame.Y0,
-                                  notch.Frame.Y1,
-                                  clearance);
-                    action = notch.Source.Edge == "top" || notch.Source.Edge == "bottom"
-                        ? "分段"
-                        : "截短";
-                }
-
-                if (nearEdge || crosses)
-                {
-                    var text = $"距{edgeNames[notch.Source.Edge]}缺口边框不足{clearance:0.##}mm，已{action}";
-                    if (!bar.Warnings.Contains(text))
+                    if (!edgeNames.ContainsKey(edge))
                     {
-                        bar.Warnings.Add(text);
+                        continue;
+                    }
+
+                    bool nearEdge;
+                    bool crosses;
+                    string action;
+                    if (bar.Orientation == "vertical")
+                    {
+                        nearEdge = (edge == "top" || edge == "bottom")
+                                   && NearInterval(
+                                       Band(bar.Center, bar.Thickness),
+                                       notch.Frame.X0,
+                                       notch.Frame.X1,
+                                       clearance);
+                        crosses = (edge == "left" || edge == "right")
+                                  && NearInterval(
+                                      Band(bar.Center, bar.Thickness),
+                                      notch.Frame.X0,
+                                      notch.Frame.X1,
+                                      clearance);
+                        action = edge == "top" || edge == "bottom" ? "截短" : "分段";
+                    }
+                    else
+                    {
+                        nearEdge = (edge == "left" || edge == "right")
+                                   && NearInterval(
+                                       Band(bar.Center, bar.Thickness),
+                                       notch.Frame.Y0,
+                                       notch.Frame.Y1,
+                                       clearance);
+                        crosses = (edge == "top" || edge == "bottom")
+                                  && NearInterval(
+                                      Band(bar.Center, bar.Thickness),
+                                      notch.Frame.Y0,
+                                      notch.Frame.Y1,
+                                      clearance);
+                        action = edge == "top" || edge == "bottom" ? "分段" : "截短";
+                    }
+
+                    if (nearEdge || crosses)
+                    {
+                        var text = $"距{edgeNames[edge]}缺口边框不足{clearance:0.##}mm，已{action}";
+                        if (!bar.Warnings.Contains(text))
+                        {
+                            bar.Warnings.Add(text);
+                        }
                     }
                 }
             }
+        }
+
+        private static bool Touches(NotchGeo notch, string edge)
+        {
+            return notch.Touches.Contains(edge);
         }
 
         private static void SetHoleGroups(Bar bar, List<Bar> crossBars)
