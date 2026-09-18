@@ -28,7 +28,7 @@ namespace SteelGrid.Plugin.Commands
         public static void ShowInfo()
         {
             var editor = GetEditor();
-            editor.WriteMessage("\n钢格板自动排条插件 v0.17：支持凹口、缺角和凸出图形（外接矩形 − 矩形空洞）。");
+            editor.WriteMessage("\n钢格板自动排条插件 正式版 1.0：支持凹口、缺角和凸出图形，可框选多个图形批量排条。");
         }
 
         [CommandMethod("GPGRIDSET")]
@@ -65,8 +65,8 @@ namespace SteelGrid.Plugin.Commands
             }
 
             var editor = document.Editor;
-            var selection = SelectClosedPolyline(editor);
-            if (selection == null)
+            var selectedIds = SelectClosedPolylines(editor);
+            if (selectedIds.Length == 0)
             {
                 return;
             }
@@ -74,34 +74,89 @@ namespace SteelGrid.Plugin.Commands
             using (document.LockDocument())
             using (var transaction = document.Database.TransactionManager.StartTransaction())
             {
-                var outline = transaction.GetObject(selection.ObjectId, OpenMode.ForRead) as Polyline;
-                if (outline == null)
+                var pending = new List<Tuple<ObjectId, Polyline>>();
+                foreach (var id in selectedIds)
                 {
-                    editor.WriteMessage("\n未选中闭合多段线。");
+                    var outline = transaction.GetObject(id, OpenMode.ForRead) as Polyline;
+                    if (outline == null || !outline.Closed || !outline.Bounds.HasValue)
+                    {
+                        continue;
+                    }
+
+                    pending.Add(Tuple.Create(id, outline));
+                }
+
+                // 按输出选项中的生成顺序对源图形排序。
+                var topDownFirst = _savedSettings.GenerationOrder != GenerationOrder.LeftRightFirst;
+                pending.Sort((a, b) =>
+                {
+                    var boundsA = a.Item2.Bounds.Value;
+                    var boundsB = b.Item2.Bounds.Value;
+                    var centerAX = (boundsA.MinPoint.X + boundsA.MaxPoint.X) / 2.0;
+                    var centerBX = (boundsB.MinPoint.X + boundsB.MaxPoint.X) / 2.0;
+                    var centerAY = (boundsA.MinPoint.Y + boundsA.MaxPoint.Y) / 2.0;
+                    var centerBY = (boundsB.MinPoint.Y + boundsB.MaxPoint.Y) / 2.0;
+                    if (topDownFirst)
+                    {
+                        var byY = centerBY.CompareTo(centerAY);
+                        if (byY != 0)
+                        {
+                            return byY;
+                        }
+
+                        return centerAX.CompareTo(centerBX);
+                    }
+
+                    var byX = centerAX.CompareTo(centerBX);
+                    if (byX != 0)
+                    {
+                        return byX;
+                    }
+
+                    return centerBY.CompareTo(centerAY);
+                });
+
+                var results = new List<LayoutResult>();
+                foreach (var item in pending)
+                {
+                    var id = item.Item1;
+                    var outline = item.Item2;
+                    try
+                    {
+                        var spec = BuildSpec(outline);
+                        editor.WriteMessage(
+                            "\n识别：板件 {0:0.##} x {1:0.##}，缺口 {2} 个，受力 {3}",
+                            spec.PlateW,
+                            spec.PlateH,
+                            spec.Notches.Count,
+                            spec.LoadDirection == LoadDirection.Vertical ? "垂直" : "水平");
+                        for (var i = 0; i < spec.Notches.Count; i++)
+                        {
+                            var notch = spec.Notches[i];
+                            editor.WriteMessage(
+                                "\n  缺口{0}：{1} 起 {2:0.##} 宽 {3:0.##} 深 {4:0.##}",
+                                i + 1,
+                                notch.Edge,
+                                notch.Start,
+                                notch.Width,
+                                notch.Depth);
+                        }
+
+                        results.Add(LayoutEngine.Layout(spec));
+                    }
+                    catch (System.Exception ex)
+                    {
+                        editor.WriteMessage("\n图形 {0} 识别或排条失败：{1}", id.Handle, ex.Message);
+                    }
+                }
+
+                if (results.Count == 0)
+                {
+                    editor.WriteMessage("\n选区内没有可用的闭合多段线。");
                     return;
                 }
 
-                var spec = BuildSpec(outline);
-                editor.WriteMessage(
-                    "\n识别：板件 {0:0.##} x {1:0.##}，缺口 {2} 个，受力 {3}",
-                    spec.PlateW,
-                    spec.PlateH,
-                    spec.Notches.Count,
-                    spec.LoadDirection == LoadDirection.Vertical ? "垂直" : "水平");
-                for (var i = 0; i < spec.Notches.Count; i++)
-                {
-                    var notch = spec.Notches[i];
-                    editor.WriteMessage(
-                        "\n  缺口{0}：{1} 起 {2:0.##} 宽 {3:0.##} 深 {4:0.##}",
-                        i + 1,
-                        notch.Edge,
-                        notch.Start,
-                        notch.Width,
-                        notch.Depth);
-                }
-
-                var result = LayoutEngine.Layout(spec);
-                var placement = editor.GetPoint(new PromptPointOptions("\n指定排条图左上角位置"));
+                var placement = editor.GetPoint(new PromptPointOptions("\n指定第一个排条图左上角位置"));
                 if (placement.Status != PromptStatus.OK)
                 {
                     return;
@@ -109,16 +164,76 @@ namespace SteelGrid.Plugin.Commands
 
                 try
                 {
-                    var frameCount = DrawResult(
-                        document.Database,
-                        transaction,
-                        result,
-                        outline,
-                        placement.Value);
+                    const double horizontalGap = 250.0;
+                    const double verticalGap = 250.0;
+                    var baseX = placement.Value.X;
+                    var baseY = placement.Value.Y;
+                    var totalFrames = 0;
+                    var totalSegments = 0;
+
+                    if (_savedSettings.OutputFlow == OutputFlow.Vertical)
+                    {
+                        // 纵向输出：10 个一列，先自上至下排满一列，再新开一列。
+                        const int rowsPerColumn = 10;
+                        var columnX = baseX;
+                        var cursorY = baseY;
+                        var rowInColumn = 0;
+                        var columnMaxWidth = 0.0;
+                        foreach (var result in results)
+                        {
+                            var insertion = new Point3d(columnX, cursorY, 0.0);
+                            var extents = DrawResult(document.Database, transaction, result, insertion);
+                            totalFrames += extents.FrameCount;
+                            totalSegments += result.SegmentCount;
+                            columnMaxWidth = Math.Max(columnMaxWidth, extents.Width);
+
+                            rowInColumn++;
+                            if (rowInColumn >= rowsPerColumn)
+                            {
+                                columnX += columnMaxWidth + horizontalGap;
+                                cursorY = baseY;
+                                rowInColumn = 0;
+                                columnMaxWidth = 0.0;
+                            }
+                            else
+                            {
+                                cursorY -= extents.Height + verticalGap;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // 横向输出：10 个一行，先自左至右排满一行，再换行。
+                        const int columnsPerRow = 10;
+                        var cursorX = baseX;
+                        var rowY = baseY;
+                        var column = 0;
+                        var rowMaxHeight = 0.0;
+                        foreach (var result in results)
+                        {
+                            var insertion = new Point3d(cursorX, rowY, 0.0);
+                            var extents = DrawResult(document.Database, transaction, result, insertion);
+                            totalFrames += extents.FrameCount;
+                            totalSegments += result.SegmentCount;
+                            rowMaxHeight = Math.Max(rowMaxHeight, extents.Height);
+
+                            column++;
+                            if (column >= columnsPerRow)
+                            {
+                                rowY -= rowMaxHeight + verticalGap;
+                                cursorX = baseX;
+                                column = 0;
+                                rowMaxHeight = 0.0;
+                            }
+                            else
+                            {
+                                cursorX += extents.Width + horizontalGap;
+                            }
+                        }
+                    }
+
                     transaction.Commit();
-                    editor.WriteMessage(
-                        $"\n排条完成：纵={spec.Vertical.TypeName}，横={spec.Horizontal.TypeName}；" +
-                        $"边框料 {frameCount} 个矩形，段数 {result.SegmentCount}");
+                    editor.WriteMessage($"\n排条完成：共 {results.Count} 个图形，边框料 {totalFrames} 个矩形，段数 {totalSegments}");
                 }
                 catch (System.Exception ex)
                 {
@@ -132,15 +247,24 @@ namespace SteelGrid.Plugin.Commands
             }
         }
 
-        private static PromptEntityResult SelectClosedPolyline(Editor editor)
+        private static ObjectId[] SelectClosedPolylines(Editor editor)
         {
-            var options = new PromptEntityOptions("\n选择闭合多段线")
+            var options = new PromptSelectionOptions
             {
-                AllowNone = false
+                MessageForAdding = "\n选择要排条的闭合多段线（可用窗口框选多个）：",
+                AllowDuplicates = false
             };
-            options.SetRejectMessage("必须选择闭合 LWPOLYLINE");
-            options.AddAllowedClass(typeof(Polyline), true);
-            return editor.GetEntity(options);
+            var filter = new SelectionFilter(new[]
+            {
+                new TypedValue((int)DxfCode.Start, "LWPOLYLINE")
+            });
+            var result = editor.GetSelection(options, filter);
+            if (result.Status != PromptStatus.OK)
+            {
+                return new ObjectId[0];
+            }
+
+            return result.Value.GetObjectIds();
         }
 
         private static Spec BuildSpec(Polyline outline)
@@ -160,11 +284,10 @@ namespace SteelGrid.Plugin.Commands
             return new Point3d(bounds.MinPoint.X, bounds.MinPoint.Y, 0.0);
         }
 
-        private static int DrawResult(
+        private static GroupExtents DrawResult(
             Database database,
             Transaction transaction,
             LayoutResult result,
-            Polyline sourceOutline,
             Point3d insertionPoint)
         {
             var layerTable = (LayerTable)transaction.GetObject(database.LayerTableId, OpenMode.ForWrite);
@@ -177,7 +300,8 @@ namespace SteelGrid.Plugin.Commands
                 { "边框标注", 5 },
                 { "纵条标注", 3 },
                 { "横条标注", 6 },
-                { "首尾孔距标注", 30 },
+                { "横条首尾孔距标注", 6 },
+                { "纵条首尾孔距标注", 3 },
                 { "表格", 7 },
                 { "分组边框", 8 }
             };
@@ -326,7 +450,25 @@ namespace SteelGrid.Plugin.Commands
 
                 if (annotation.Direction == "横向")
                 {
-                    var dimensionY = ToCadY(insertionPoint.Y, plateHeight, annotation.BarCenter - annotation.BarThickness / 2.0 - 10.0);
+                    var layer = "横条首尾孔距标注";
+                    var pitch = result.Spec.Horizontal.Pitch;
+                    var lineLayoutY = annotation.BarCenter + pitch / 2.0;
+                    var dimensionY = ToCadY(insertionPoint.Y, plateHeight, lineLayoutY);
+                    var textY = ToCadY(insertionPoint.Y, plateHeight, lineLayoutY + pitch / 4.0);
+                    AddEndTicks(
+                        modelSpace,
+                        transaction,
+                        insertionPoint.X + annotation.SegmentA,
+                        dimensionY,
+                        true,
+                        layer);
+                    AddEndTicks(
+                        modelSpace,
+                        transaction,
+                        insertionPoint.X + annotation.FirstPosition,
+                        dimensionY,
+                        true,
+                        layer);
                     AddLine(
                         modelSpace,
                         transaction,
@@ -334,7 +476,21 @@ namespace SteelGrid.Plugin.Commands
                         dimensionY,
                         insertionPoint.X + annotation.FirstPosition,
                         dimensionY,
-                        "首尾孔距标注");
+                        layer);
+                    AddEndTicks(
+                        modelSpace,
+                        transaction,
+                        insertionPoint.X + annotation.LastPosition,
+                        dimensionY,
+                        true,
+                        layer);
+                    AddEndTicks(
+                        modelSpace,
+                        transaction,
+                        insertionPoint.X + annotation.SegmentB,
+                        dimensionY,
+                        true,
+                        layer);
                     AddLine(
                         modelSpace,
                         transaction,
@@ -342,63 +498,104 @@ namespace SteelGrid.Plugin.Commands
                         dimensionY,
                         insertionPoint.X + annotation.SegmentB,
                         dimensionY,
-                        "首尾孔距标注");
+                        layer);
                     AddText(
                         modelSpace,
                         transaction,
-                        insertionPoint.X + annotation.FirstPosition,
-                        dimensionY + 8.0,
+                        insertionPoint.X + (annotation.SegmentA + annotation.FirstPosition) / 2.0,
+                        textY,
                         "首" + ReportTables.Format(annotation.FirstHole),
-                        17.0,
-                        "首尾孔距标注",
+                        13.0,
+                        layer,
                         true);
                     AddText(
                         modelSpace,
                         transaction,
-                        insertionPoint.X + annotation.LastPosition,
-                        dimensionY + 8.0,
+                        insertionPoint.X + (annotation.LastPosition + annotation.SegmentB) / 2.0,
+                        textY,
                         "尾" + ReportTables.Format(annotation.LastHole),
-                        17.0,
-                        "首尾孔距标注",
+                        13.0,
+                        layer,
                         true);
                 }
                 else
                 {
-                    var dimensionX = insertionPoint.X + annotation.BarCenter - annotation.BarThickness / 2.0 - 8.0;
-                    AddLine(
+                    var layer = "纵条首尾孔距标注";
+                    var pitch = result.Spec.Vertical.Pitch;
+                    var lineX = insertionPoint.X + annotation.BarCenter + pitch / 2.0;
+                    var textX = lineX + pitch / 4.0;
+                    var firstMidY = ToCadY(
+                        insertionPoint.Y,
+                        plateHeight,
+                        (annotation.SegmentA + annotation.FirstPosition) / 2.0);
+                    var lastMidY = ToCadY(
+                        insertionPoint.Y,
+                        plateHeight,
+                        (annotation.LastPosition + annotation.SegmentB) / 2.0);
+                    AddEndTicks(
                         modelSpace,
                         transaction,
-                        dimensionX,
+                        lineX,
                         ToCadY(insertionPoint.Y, plateHeight, annotation.SegmentA),
-                        dimensionX,
+                        false,
+                        layer);
+                    AddEndTicks(
+                        modelSpace,
+                        transaction,
+                        lineX,
                         ToCadY(insertionPoint.Y, plateHeight, annotation.FirstPosition),
-                        "首尾孔距标注");
+                        false,
+                        layer);
                     AddLine(
                         modelSpace,
                         transaction,
-                        dimensionX,
-                        ToCadY(insertionPoint.Y, plateHeight, annotation.LastPosition),
-                        dimensionX,
-                        ToCadY(insertionPoint.Y, plateHeight, annotation.SegmentB),
-                        "首尾孔距标注");
-                    AddText(
-                        modelSpace,
-                        transaction,
-                        dimensionX - 6.0,
+                        lineX,
+                        ToCadY(insertionPoint.Y, plateHeight, annotation.SegmentA),
+                        lineX,
                         ToCadY(insertionPoint.Y, plateHeight, annotation.FirstPosition),
-                        "首" + ReportTables.Format(annotation.FirstHole),
-                        17.0,
-                        "首尾孔距标注",
-                        true);
+                        layer);
+                    AddEndTicks(
+                        modelSpace,
+                        transaction,
+                        lineX,
+                        ToCadY(insertionPoint.Y, plateHeight, annotation.LastPosition),
+                        false,
+                        layer);
+                    AddEndTicks(
+                        modelSpace,
+                        transaction,
+                        lineX,
+                        ToCadY(insertionPoint.Y, plateHeight, annotation.SegmentB),
+                        false,
+                        layer);
+                    AddLine(
+                        modelSpace,
+                        transaction,
+                        lineX,
+                        ToCadY(insertionPoint.Y, plateHeight, annotation.LastPosition),
+                        lineX,
+                        ToCadY(insertionPoint.Y, plateHeight, annotation.SegmentB),
+                        layer);
                     AddText(
                         modelSpace,
                         transaction,
-                        dimensionX - 6.0,
-                        ToCadY(insertionPoint.Y, plateHeight, annotation.LastPosition),
+                        textX,
+                        firstMidY,
+                        "首" + ReportTables.Format(annotation.FirstHole),
+                        13.0,
+                        layer,
+                        true,
+                        Math.PI / 2.0);
+                    AddText(
+                        modelSpace,
+                        transaction,
+                        textX,
+                        lastMidY,
                         "尾" + ReportTables.Format(annotation.LastHole),
-                        17.0,
-                        "首尾孔距标注",
-                        true);
+                        13.0,
+                        layer,
+                        true,
+                        Math.PI / 2.0);
                 }
             }
 
@@ -418,14 +615,16 @@ namespace SteelGrid.Plugin.Commands
                 tableLeft,
                 tableBottom - 80.0,
                 ReportTables.ReportTable(result, "纵向"),
-                "纵向扁钢下料（共 " + ReportTables.ReportTable(result, "纵向").Sum(item => item.Count) + " 根）");
+                "纵向" + result.Spec.Vertical.TypeName + "下料（共 "
+                + ReportTables.ReportTable(result, "纵向").Sum(item => item.Count) + " 根）");
             tableBottom = DrawTable(
                 modelSpace,
                 transaction,
                 tableLeft,
                 tableBottom - 80.0,
                 PluginTableRows.GetHorizontalRows(result),
-                "横向扁钢下料（共 " + PluginTableRows.GetHorizontalRows(result).Sum(item => item.Count) + " 根）");
+                "横向" + result.Spec.Horizontal.TypeName + "下料（共 "
+                + PluginTableRows.GetHorizontalRows(result).Sum(item => item.Count) + " 根）");
 
             var groupLeft = insertionPoint.X - 260.0;
             var groupRight = tableLeft + tableWidth + 60.0;
@@ -439,7 +638,26 @@ namespace SteelGrid.Plugin.Commands
                 "分组边框");
             modelSpace.AppendEntity(border);
             transaction.AddNewlyCreatedDBObject(border, true);
-            return frameCount;
+            return new GroupExtents(
+                groupRight - groupLeft,
+                groupTop - groupBottom,
+                frameCount);
+        }
+
+        private struct GroupExtents
+        {
+            public GroupExtents(double width, double height, int frameCount)
+            {
+                Width = width;
+                Height = height;
+                FrameCount = frameCount;
+            }
+
+            public double Width { get; }
+
+            public double Height { get; }
+
+            public int FrameCount { get; }
         }
 
         private static int DrawFramePieces(
@@ -962,6 +1180,25 @@ namespace SteelGrid.Plugin.Commands
             line.Layer = layer;
             modelSpace.AppendEntity(line);
             transaction.AddNewlyCreatedDBObject(line, true);
+        }
+
+        private static void AddEndTicks(
+            BlockTableRecord modelSpace,
+            Transaction transaction,
+            double x,
+            double y,
+            bool horizontalDimension,
+            string layer)
+        {
+            const double tick = 4.0;
+            if (horizontalDimension)
+            {
+                AddLine(modelSpace, transaction, x, y - tick, x, y + tick, layer);
+            }
+            else
+            {
+                AddLine(modelSpace, transaction, x - tick, y, x + tick, y, layer);
+            }
         }
 
         private static Polyline CreateOutlinePolyline(

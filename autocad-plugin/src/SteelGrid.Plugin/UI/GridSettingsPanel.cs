@@ -5,9 +5,16 @@ using SteelGrid.Core.Model;
 
 namespace SteelGrid.Plugin.UI
 {
-    /// <summary>排条参数面板。使用固定行布局，确保标签和输入框同行显示。</summary>
+    /// <summary>排条参数面板，包含“排条参数”和“输出选项”两个标签页。</summary>
     public sealed class GridSettingsPanel : UserControl
     {
+        private readonly TabControl _tabs = new TabControl();
+        private readonly TabPage _paramTab = new TabPage("排条参数");
+        private readonly TabPage _outputTab = new TabPage("输出选项");
+        private readonly Panel _paramHost = new Panel { AutoScroll = true };
+        private readonly Panel _outputHost = new Panel { AutoScroll = true };
+        private readonly TableLayoutPanel _paramLayout = new TableLayoutPanel();
+
         private readonly NumericUpDown _shrink = CreateNumber(0.0, 200.0, 5.0);
         private readonly ComboBox _loadDirection = CreateLoadDirectionCombo();
         private readonly NumericUpDown _frame = CreateNumber(1.0, 200.0, 5.0);
@@ -17,10 +24,32 @@ namespace SteelGrid.Plugin.UI
         private readonly ComboBox _verticalType = CreateBarTypeCombo();
         private readonly NumericUpDown _verticalThickness = CreateNumber(0.1, 100.0, 5.0);
         private readonly NumericUpDown _verticalPitch = CreateNumber(1.0, 500.0, 36.85);
+
+        private readonly RadioButton _horizontalOutput = new RadioButton
+        {
+            Text = "横向输出",
+            AutoSize = true
+        };
+        private readonly RadioButton _verticalOutput = new RadioButton
+        {
+            Text = "纵向输出",
+            AutoSize = true
+        };
+        private readonly RadioButton _topDownFirst = new RadioButton
+        {
+            Text = "先自上至下后自左至右",
+            AutoSize = true
+        };
+        private readonly RadioButton _leftRightFirst = new RadioButton
+        {
+            Text = "先自左至右后自上至下",
+            AutoSize = true
+        };
+
         private readonly Button _saveButton = new Button
         {
             Text = "保存参数",
-            Size = new Size(170, 34)
+            Height = 38
         };
 
         public event EventHandler<GridSettingsData> SaveClicked;
@@ -29,30 +58,75 @@ namespace SteelGrid.Plugin.UI
         {
             AutoScaleMode = AutoScaleMode.None;
             Font = new Font("Microsoft YaHei UI", 9F);
-            AutoScroll = true;
-            Width = 520;
-            Height = 760;
+            Width = 560;
+            Height = 800;
+
+            _paramLayout.Dock = DockStyle.Top;
+            _paramLayout.Height = 16 + 9 * 30 + 10;
+            _paramLayout.ColumnCount = 2;
+            _paramLayout.RowCount = 9;
+            _paramLayout.Padding = new Padding(14, 16, 14, 10);
+            _paramLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
+            _paramLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            for (var i = 0; i < 9; i++)
+            {
+                _paramLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+            }
+
+            _paramHost.Dock = DockStyle.Fill;
+            _outputHost.Dock = DockStyle.Fill;
+            _paramHost.Controls.Add(_paramLayout);
+
+            _tabs.Dock = DockStyle.Fill;
+            _tabs.TabPages.Add(_paramTab);
+            _tabs.TabPages.Add(_outputTab);
+            _paramTab.Controls.Add(_paramHost);
+            _outputTab.Controls.Add(_outputHost);
+
+            _saveButton.Dock = DockStyle.Bottom;
+            _saveButton.Click += (sender, e) =>
+            {
+                SaveClicked?.Invoke(this, GetSettings());
+            };
+
+            Controls.Add(_tabs);
+            Controls.Add(_saveButton);
 
             LoadSettings(settings);
 
-            AddRow("缩尺(mm):", _shrink);
-            AddRow("受力方向:", _loadDirection);
-            AddRow("边框厚度(mm):", _frame);
-            AddRow("横向材料:", _horizontalType);
-            AddRow("横向厚度(mm):", _horizontalThickness);
-            AddRow("横向材料中心距(mm):", _horizontalPitch);
-            AddRow("纵向材料:", _verticalType);
-            AddRow("纵向材料厚度(mm):", _verticalThickness);
-            AddRow("纵向材料中心距(mm):", _verticalPitch);
+            AddRow(_paramLayout, 0, "缩尺(mm):", _shrink);
+            AddRow(_paramLayout, 1, "受力方向:", _loadDirection);
+            AddRow(_paramLayout, 2, "边框厚度(mm):", _frame);
+            AddRow(_paramLayout, 3, "横向材料:", _horizontalType);
+            AddRow(_paramLayout, 4, "横向厚度(mm):", _horizontalThickness);
+            AddRow(_paramLayout, 5, "横向材料中心距(mm):", _horizontalPitch);
+            AddRow(_paramLayout, 6, "纵向材料:", _verticalType);
+            AddRow(_paramLayout, 7, "纵向材料厚度(mm):", _verticalThickness);
+            AddRow(_paramLayout, 8, "纵向材料中心距(mm):", _verticalPitch);
 
-            _saveButton.Location = new Point(180, 18 + 9 * 52 + 14);
-            _saveButton.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-            _saveButton.Click += (sender, e) =>
+            var directionGroup = new GroupBox
             {
-                var data = GetSettings();
-                SaveClicked?.Invoke(this, data);
+                Text = "输出方向",
+                Location = new Point(18, 18),
+                Size = new Size(500, 96)
             };
-            Controls.Add(_saveButton);
+            _horizontalOutput.Location = new Point(24, 30);
+            _verticalOutput.Location = new Point(24, 58);
+            directionGroup.Controls.Add(_horizontalOutput);
+            directionGroup.Controls.Add(_verticalOutput);
+            _outputHost.Controls.Add(directionGroup);
+
+            var orderGroup = new GroupBox
+            {
+                Text = "生成顺序",
+                Location = new Point(18, 130),
+                Size = new Size(500, 96)
+            };
+            _topDownFirst.Location = new Point(24, 30);
+            _leftRightFirst.Location = new Point(24, 58);
+            orderGroup.Controls.Add(_topDownFirst);
+            orderGroup.Controls.Add(_leftRightFirst);
+            _outputHost.Controls.Add(orderGroup);
         }
 
         private void LoadSettings(GridSettingsData settings)
@@ -66,6 +140,11 @@ namespace SteelGrid.Plugin.UI
             _verticalType.SelectedIndex = settings.VerticalType == BarType.TwistedSquare ? 1 : 0;
             _verticalThickness.Value = ClampDecimal(settings.VerticalThickness, 0.1, 100.0);
             _verticalPitch.Value = ClampDecimal(settings.VerticalPitch, 1.0, 500.0);
+
+            _horizontalOutput.Checked = settings.OutputFlow != OutputFlow.Vertical;
+            _verticalOutput.Checked = settings.OutputFlow == OutputFlow.Vertical;
+            _topDownFirst.Checked = settings.GenerationOrder != GenerationOrder.LeftRightFirst;
+            _leftRightFirst.Checked = settings.GenerationOrder == GenerationOrder.LeftRightFirst;
         }
 
         public GridSettingsData GetSettings()
@@ -86,8 +165,28 @@ namespace SteelGrid.Plugin.UI
                     ? BarType.TwistedSquare
                     : BarType.Flat,
                 VerticalThickness = (double)_verticalThickness.Value,
-                VerticalPitch = (double)_verticalPitch.Value
+                VerticalPitch = (double)_verticalPitch.Value,
+                OutputFlow = _verticalOutput.Checked ? OutputFlow.Vertical : OutputFlow.Horizontal,
+                GenerationOrder = _leftRightFirst.Checked
+                    ? GenerationOrder.LeftRightFirst
+                    : GenerationOrder.TopDownFirst
             };
+        }
+
+        private static void AddRow(TableLayoutPanel layout, int row, string labelText, Control input)
+        {
+            var label = new Label
+            {
+                Text = labelText,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Margin = new Padding(0)
+            };
+            input.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+            input.Height = 26;
+            input.Margin = new Padding(0);
+            layout.Controls.Add(label, 0, row);
+            layout.Controls.Add(input, 1, row);
         }
 
         private static decimal ClampDecimal(double value, double min, double max)
@@ -103,28 +202,6 @@ namespace SteelGrid.Plugin.UI
             }
 
             return (decimal)value;
-        }
-
-        private void AddRow(string labelText, Control input)
-        {
-            var rowIndex = Controls.Count / 2;
-            var y = 18 + rowIndex * 52;
-
-            var label = new Label
-            {
-                Text = labelText,
-                Location = new Point(18, y + 5),
-                Size = new Size(205, 24),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left
-            };
-
-            input.Location = new Point(232, y);
-            input.Size = new Size(245, 28);
-            input.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-
-            Controls.Add(label);
-            Controls.Add(input);
         }
 
         private static NumericUpDown CreateNumber(double min, double max, double value)

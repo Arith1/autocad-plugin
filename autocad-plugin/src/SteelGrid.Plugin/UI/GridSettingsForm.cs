@@ -16,8 +16,8 @@ namespace SteelGrid.Plugin.UI
             MinimizeBox = true;
             MaximizeBox = true;
             ShowInTaskbar = true;
-            ClientSize = new System.Drawing.Size(520, 800);
-            MinimumSize = new System.Drawing.Size(500, 780);
+            ClientSize = new System.Drawing.Size(560, 800);
+            MinimumSize = new System.Drawing.Size(540, 780);
             AutoScaleMode = AutoScaleMode.None;
 
             _settingsPanel = new GridSettingsPanel(settings);
