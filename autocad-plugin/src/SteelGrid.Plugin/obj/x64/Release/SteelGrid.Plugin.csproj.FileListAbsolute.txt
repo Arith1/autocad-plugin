@@ -1,0 +1,13 @@
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Release\SteelGrid.Plugin.dll
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Release\SteelGrid.Plugin.pdb
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Release\SteelGrid.Core.dll
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Release\SteelGrid.Core.pdb
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\obj\x64\Release\SteelGrid.Plugin.csproj.AssemblyReference.cache
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\obj\x64\Release\SteelGrid.Plugin.csproj.CoreCompileInputs.cache
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\obj\x64\Release\SteelGri.DD368277.Up2Date
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\obj\x64\Release\SteelGrid.Plugin.dll
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\obj\x64\Release\SteelGrid.Plugin.pdb
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Release\v1.03\SteelGrid.Plugin.dll
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Release\v1.03\SteelGrid.Plugin.pdb
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Release\v1.03\SteelGrid.Core.dll
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Release\v1.03\SteelGrid.Core.pdb

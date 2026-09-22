@@ -1,0 +1,6 @@
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Core\bin\Release\SteelGrid.Core.dll
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Core\bin\Release\SteelGrid.Core.pdb
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Core\obj\Release\SteelGrid.Core.csproj.AssemblyReference.cache
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Core\obj\Release\SteelGrid.Core.csproj.CoreCompileInputs.cache
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Core\obj\Release\SteelGrid.Core.dll
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Core\obj\Release\SteelGrid.Core.pdb

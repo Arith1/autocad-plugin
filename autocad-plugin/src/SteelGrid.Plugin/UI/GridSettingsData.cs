@@ -47,6 +47,10 @@ namespace SteelGrid.Plugin.UI
 
         public GenerationOrder GenerationOrder { get; set; } = GenerationOrder.TopDownFirst;
 
+        public int PerRowColumns { get; set; } = 10;
+
+        public int PerColumnRows { get; set; } = 10;
+
         public Spec ToSpec(double openingW, double openingH, Notch[] notches)
         {
             return new Spec

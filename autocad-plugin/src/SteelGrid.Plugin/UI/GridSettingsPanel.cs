@@ -45,6 +45,8 @@ namespace SteelGrid.Plugin.UI
             Text = "先自左至右后自上至下",
             AutoSize = true
         };
+        private readonly NumericUpDown _perRowColumns = CreateInteger(1, 100, 10);
+        private readonly NumericUpDown _perColumnRows = CreateInteger(1, 100, 10);
 
         private readonly Button _saveButton = new Button
         {
@@ -127,6 +129,34 @@ namespace SteelGrid.Plugin.UI
             orderGroup.Controls.Add(_topDownFirst);
             orderGroup.Controls.Add(_leftRightFirst);
             _outputHost.Controls.Add(orderGroup);
+
+            var countGroup = new GroupBox
+            {
+                Text = "每行/列数量",
+                Location = new Point(18, 242),
+                Size = new Size(500, 116)
+            };
+            var perRowLabel = new Label
+            {
+                Text = "横向输出每行个数:",
+                Location = new Point(24, 28),
+                AutoSize = true
+            };
+            _perRowColumns.Location = new Point(190, 24);
+            _perRowColumns.Width = 90;
+            var perColumnLabel = new Label
+            {
+                Text = "纵向输出每列个数:",
+                Location = new Point(24, 68),
+                AutoSize = true
+            };
+            _perColumnRows.Location = new Point(190, 64);
+            _perColumnRows.Width = 90;
+            countGroup.Controls.Add(perRowLabel);
+            countGroup.Controls.Add(_perRowColumns);
+            countGroup.Controls.Add(perColumnLabel);
+            countGroup.Controls.Add(_perColumnRows);
+            _outputHost.Controls.Add(countGroup);
         }
 
         private void LoadSettings(GridSettingsData settings)
@@ -145,6 +175,8 @@ namespace SteelGrid.Plugin.UI
             _verticalOutput.Checked = settings.OutputFlow == OutputFlow.Vertical;
             _topDownFirst.Checked = settings.GenerationOrder != GenerationOrder.LeftRightFirst;
             _leftRightFirst.Checked = settings.GenerationOrder == GenerationOrder.LeftRightFirst;
+            _perRowColumns.Value = ClampDecimal(settings.PerRowColumns, 1, 100);
+            _perColumnRows.Value = ClampDecimal(settings.PerColumnRows, 1, 100);
         }
 
         public GridSettingsData GetSettings()
@@ -169,7 +201,9 @@ namespace SteelGrid.Plugin.UI
                 OutputFlow = _verticalOutput.Checked ? OutputFlow.Vertical : OutputFlow.Horizontal,
                 GenerationOrder = _leftRightFirst.Checked
                     ? GenerationOrder.LeftRightFirst
-                    : GenerationOrder.TopDownFirst
+                    : GenerationOrder.TopDownFirst,
+                PerRowColumns = (int)_perRowColumns.Value,
+                PerColumnRows = (int)_perColumnRows.Value
             };
         }
 
@@ -212,6 +246,17 @@ namespace SteelGrid.Plugin.UI
                 Maximum = (decimal)max,
                 Value = (decimal)value,
                 DecimalPlaces = 2
+            };
+        }
+
+        private static NumericUpDown CreateInteger(double min, double max, double value)
+        {
+            return new NumericUpDown
+            {
+                Minimum = (decimal)min,
+                Maximum = (decimal)max,
+                Value = (decimal)value,
+                DecimalPlaces = 0
             };
         }
 

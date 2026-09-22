@@ -5,6 +5,7 @@ using System.IO;
 using SteelGrid.Core.Geometry;
 using SteelGrid.Core.Layout;
 using SteelGrid.Core.Model;
+using SteelGrid.Core.Report;
 
 namespace GridTest
 {
@@ -77,6 +78,98 @@ namespace GridTest
                             var r = piece.Rect;
                             Console.WriteLine("      " + piece.Direction + " " + F(r.W) + "x" + F(r.H)
                                 + " @(" + F(r.X0) + "," + F(r.Y0) + ")");
+                        }
+
+                        var frameRows = ReportTables.FrameTable(result, pieces);
+                        Console.WriteLine("    frame table rows: " + frameRows.Count);
+                        for (var r = 0; r < frameRows.Count; r++)
+                        {
+                            Console.WriteLine("      #" + (r + 1) + " " + frameRows[r].Direction + " "
+                                + F(frameRows[r].Length) + " x" + frameRows[r].Count);
+                        }
+
+                        foreach (var direction in new[] { "纵向", "横向" })
+                        {
+                            var rows = ReportTables.ReportTable(result, direction);
+                            Console.WriteLine("    " + direction + " table rows: " + rows.Count);
+                            foreach (var row in rows)
+                            {
+                                Console.WriteLine("      " + row.Spec + " len=" + F(row.Length) + " x" + row.Count
+                                    + " first=" + row.FirstHole + " last=" + row.LastHole + " holes=" + row.Holes);
+                            }
+                        }
+
+                        var annotations = ReportTables.HoleAnnotations(result);
+                        Console.WriteLine("    hole annotations: " + annotations.Count);
+                        foreach (var annotation in annotations)
+                        {
+                            Console.WriteLine("      " + annotation.Direction + " len=" + F(annotation.Length)
+                                + " first=" + F(annotation.FirstHole) + " last=" + F(annotation.LastHole));
+                        }
+
+                        foreach (var direction in new[] { "纵向", "横向" })
+                        {
+                            var bars = direction == "纵向" ? result.VerticalBars : result.HorizontalBars;
+                            var rows = ReportTables.ReportTable(result, direction);
+                            foreach (var row in rows)
+                            {
+                                var exact = 0;
+                                foreach (var bar in bars)
+                                {
+                                    for (var s = 0; s < bar.Segments.Count; s++)
+                                    {
+                                        var segment = bar.Segments[s];
+                                        var holes = bar.HoleGroups[s];
+                                        if (holes.Count == 0 || Math.Abs(segment.Length - row.Length) > 1e-6)
+                                        {
+                                            continue;
+                                        }
+
+                                        var first = Math.Round(holes[0] - segment.A, 6);
+                                        var last = Math.Round(segment.B - holes[holes.Count - 1], 6);
+                                        if (ReportTables.Format(first) == row.FirstHole
+                                            && ReportTables.Format(last) == row.LastHole)
+                                        {
+                                            exact++;
+                                        }
+                                    }
+                                }
+
+                                Console.WriteLine("    exact-match " + direction + " len=" + F(row.Length)
+                                    + " first=" + row.FirstHole + " last=" + row.LastHole + " -> " + exact);
+
+                                if (exact == 0)
+                                {
+                                    var combos = new Dictionary<string, int>();
+                                    foreach (var bar in bars)
+                                    {
+                                        for (var s = 0; s < bar.Segments.Count; s++)
+                                        {
+                                            var segment = bar.Segments[s];
+                                            var holes = bar.HoleGroups[s];
+                                            if (holes.Count == 0 || Math.Abs(segment.Length - row.Length) > 1e-6)
+                                            {
+                                                continue;
+                                            }
+
+                                            var first = Math.Round(holes[0] - segment.A, 6);
+                                            var last = Math.Round(segment.B - holes[holes.Count - 1], 6);
+                                            var combo = ReportTables.Format(first) + "/" + ReportTables.Format(last);
+                                            if (!combos.ContainsKey(combo))
+                                            {
+                                                combos[combo] = 0;
+                                            }
+
+                                            combos[combo]++;
+                                        }
+                                    }
+
+                                    foreach (var combo in combos)
+                                    {
+                                        Console.WriteLine("      raw combos " + combo.Key + " x" + combo.Value);
+                                    }
+                                }
+                            }
                         }
                     }
                     catch (Exception ex)

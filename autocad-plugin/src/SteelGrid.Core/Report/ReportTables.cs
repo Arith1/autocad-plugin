@@ -114,6 +114,15 @@ namespace SteelGrid.Core.Report
             public List<Variant> Variants { get; }
         }
 
+        private sealed class HoleGroup
+        {
+            public Variant Representative { get; set; }
+
+            public int RepresentativeCount { get; set; }
+
+            public int TotalCount { get; set; }
+        }
+
         public static string Format(double value)
         {
             var text = value.ToString("0.00", CultureInfo.InvariantCulture)
@@ -162,19 +171,72 @@ namespace SteelGrid.Core.Report
             var items = new List<ReportItem>();
             foreach (var state in order)
             {
-                var first = JoinNumbers(state.Variants, true);
-                var last = JoinNumbers(state.Variants, false);
-                var holes = JoinHoles(state.Variants);
-                items.Add(new ReportItem
+                var tolerance = state.Direction == "横向"
+                    ? result.Spec.Vertical.Pitch
+                    : result.Spec.Horizontal.Pitch;
+
+                var preciseOrder = new List<Variant>();
+                var preciseCounts = new Dictionary<string, int>();
+                foreach (var variant in state.Variants)
                 {
-                    Spec = state.CutType,
-                    Length = state.Length,
-                    Direction = state.Direction,
-                    Count = state.Indices.Count,
-                    FirstHole = first,
-                    LastHole = last,
-                    Holes = holes
-                });
+                    var key = PreciseKey(variant);
+                    if (!preciseCounts.ContainsKey(key))
+                    {
+                        preciseOrder.Add(variant);
+                        preciseCounts[key] = 0;
+                    }
+
+                    preciseCounts[key]++;
+                }
+
+                var groups = new List<HoleGroup>();
+                foreach (var variant in preciseOrder)
+                {
+                    var count = preciseCounts[PreciseKey(variant)];
+                    HoleGroup group = null;
+                    foreach (var candidate in groups)
+                    {
+                        if (SameFirstLast(variant, candidate.Representative, tolerance))
+                        {
+                            group = candidate;
+                            break;
+                        }
+                    }
+
+                    if (group == null)
+                    {
+                        groups.Add(new HoleGroup
+                        {
+                            Representative = variant,
+                            RepresentativeCount = count,
+                            TotalCount = count
+                        });
+                    }
+                    else
+                    {
+                        group.TotalCount += count;
+                        if (count > group.RepresentativeCount)
+                        {
+                            group.Representative = variant;
+                            group.RepresentativeCount = count;
+                        }
+                    }
+                }
+
+                foreach (var group in groups)
+                {
+                    var variant = group.Representative;
+                    items.Add(new ReportItem
+                    {
+                        Spec = state.CutType,
+                        Length = state.Length,
+                        Direction = state.Direction,
+                        Count = group.TotalCount,
+                        FirstHole = variant.First.HasValue ? Format(Math.Round(variant.First.Value, 6)) : "",
+                        LastHole = variant.Last.HasValue ? Format(Math.Round(variant.Last.Value, 6)) : "",
+                        Holes = variant.Holes.ToString(CultureInfo.InvariantCulture)
+                    });
+                }
             }
 
             return items;
@@ -201,71 +263,42 @@ namespace SteelGrid.Core.Report
                     continue;
                 }
 
-                var candidates = new List<Tuple<Bar, Segment, List<double>>>();
                 foreach (var bar in bars)
                 {
+                    var matched = false;
                     for (var i = 0; i < bar.Segments.Count; i++)
                     {
                         var segment = bar.Segments[i];
                         var holes = bar.HoleGroups[i];
-                        if (holes.Count > 0 && Math.Abs(segment.Length - row.Length) <= 1e-6)
+                        if (holes.Count == 0 || Math.Abs(segment.Length - row.Length) > 1e-6)
                         {
-                            candidates.Add(Tuple.Create(bar, segment, holes));
+                            continue;
                         }
-                    }
-                }
 
-                if (candidates.Count == 0)
-                {
-                    continue;
-                }
+                        var first = Math.Round(holes[0] - segment.A, 6);
+                        var last = Math.Round(segment.B - holes[holes.Count - 1], 6);
+                        if (Format(first) != row.FirstHole || Format(last) != row.LastHole)
+                        {
+                            continue;
+                        }
 
-                // 和 Python 逻辑一致：同一规格有多种首尾孔距时，取数量最多的一组。
-                var counts = new Dictionary<string, int>();
-                var order = new List<Tuple<double, double>>();
-                foreach (var candidate in candidates)
-                {
-                    var first = Math.Round(candidate.Item3[0] - candidate.Item2.A, 6);
-                    var last = Math.Round(candidate.Item2.B - candidate.Item3[candidate.Item3.Count - 1], 6);
-                    var key = first.ToString("R", CultureInfo.InvariantCulture) + "|" + last.ToString("R", CultureInfo.InvariantCulture);
-                    if (!counts.ContainsKey(key))
-                    {
-                        counts[key] = 0;
-                        order.Add(Tuple.Create(first, last));
-                    }
-
-                    counts[key]++;
-                }
-
-                var selected = order[0];
-                var selectedCount = counts[selected.Item1.ToString("R", CultureInfo.InvariantCulture) + "|" + selected.Item2.ToString("R", CultureInfo.InvariantCulture)];
-                foreach (var item in order)
-                {
-                    var count = counts[item.Item1.ToString("R", CultureInfo.InvariantCulture) + "|" + item.Item2.ToString("R", CultureInfo.InvariantCulture)];
-                    if (count > selectedCount)
-                    {
-                        selected = item;
-                        selectedCount = count;
-                    }
-                }
-
-                foreach (var candidate in candidates)
-                {
-                    var first = Math.Round(candidate.Item3[0] - candidate.Item2.A, 6);
-                    var last = Math.Round(candidate.Item2.B - candidate.Item3[candidate.Item3.Count - 1], 6);
-                    if (first == selected.Item1 && last == selected.Item2)
-                    {
                         annotations.Add(new HoleAnnotation(
                             direction,
                             row.Length,
                             first,
                             last,
-                            candidate.Item1.Center,
-                            candidate.Item1.Thickness,
-                            candidate.Item2.A,
-                            candidate.Item2.B,
-                            candidate.Item3[0],
-                            candidate.Item3[candidate.Item3.Count - 1]));
+                            bar.Center,
+                            bar.Thickness,
+                            segment.A,
+                            segment.B,
+                            holes[0],
+                            holes[holes.Count - 1]));
+                        matched = true;
+                        break;
+                    }
+
+                    if (matched)
+                    {
                         break;
                     }
                 }
@@ -351,38 +384,31 @@ namespace SteelGrid.Core.Report
             counts[key]++;
         }
 
-        private static string JoinNumbers(List<Variant> variants, bool first)
+        private static string PreciseKey(Variant variant)
         {
-            var texts = new List<string>();
-            foreach (var variant in variants)
-            {
-                var value = first ? variant.First : variant.Last;
-                if (value.HasValue)
-                {
-                    AddUnique(texts, Format(value.Value));
-                }
-            }
-
-            return string.Join("/", texts);
+            var first = variant.First.HasValue
+                ? Math.Round(variant.First.Value, 6).ToString("R", CultureInfo.InvariantCulture)
+                : "-";
+            var last = variant.Last.HasValue
+                ? Math.Round(variant.Last.Value, 6).ToString("R", CultureInfo.InvariantCulture)
+                : "-";
+            return first + "|" + last + "|" + variant.Holes;
         }
 
-        private static string JoinHoles(List<Variant> variants)
+        private static bool SameFirstLast(Variant left, Variant right, double tolerance)
         {
-            var texts = new List<string>();
-            foreach (var variant in variants)
-            {
-                AddUnique(texts, variant.Holes.ToString(CultureInfo.InvariantCulture));
-            }
-
-            return texts.Count == 0 ? "0" : string.Join("/", texts);
+            return SameValue(left.First, right.First, tolerance)
+                   && SameValue(left.Last, right.Last, tolerance);
         }
 
-        private static void AddUnique(List<string> texts, string text)
+        private static bool SameValue(double? left, double? right, double tolerance)
         {
-            if (!string.IsNullOrEmpty(text) && !texts.Contains(text))
+            if (!left.HasValue || !right.HasValue)
             {
-                texts.Add(text);
+                return left.HasValue == right.HasValue;
             }
+
+            return Math.Abs(left.Value - right.Value) <= tolerance + 1e-9;
         }
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.Colors;
@@ -21,14 +22,13 @@ namespace SteelGrid.Plugin.Commands
         private static GridSettingsData _savedSettings = GridSettingsStore.Load();
         private static UI.GridSettingsForm _settingsForm;
         private const double BarLabelOffset = 50.0;
-        private const double BorderDimensionOffset = 110.0;
-        private const double BorderTextExtraOffset = 40.0;
+        private const double BorderTextOffset = 15.0;
 
         [CommandMethod("GPGRIDINFO")]
         public static void ShowInfo()
         {
             var editor = GetEditor();
-            editor.WriteMessage("\n钢格板自动排条插件 正式版 1.0：支持凹口、缺角和凸出图形，可框选多个图形批量排条。");
+            editor.WriteMessage("\n钢格板自动排条插件 正式版 1.03：支持凹口、缺角和凸出图形，可框选多个图形批量排条。");
         }
 
         [CommandMethod("GPGRIDSET")]
@@ -174,7 +174,7 @@ namespace SteelGrid.Plugin.Commands
                     if (_savedSettings.OutputFlow == OutputFlow.Vertical)
                     {
                         // 纵向输出：10 个一列，先自上至下排满一列，再新开一列。
-                        const int rowsPerColumn = 10;
+                        var rowsPerColumn = Math.Max(1, _savedSettings.PerColumnRows);
                         var columnX = baseX;
                         var cursorY = baseY;
                         var rowInColumn = 0;
@@ -204,7 +204,7 @@ namespace SteelGrid.Plugin.Commands
                     else
                     {
                         // 横向输出：10 个一行，先自左至右排满一行，再换行。
-                        const int columnsPerRow = 10;
+                        var columnsPerRow = Math.Max(1, _savedSettings.PerRowColumns);
                         var cursorX = baseX;
                         var rowY = baseY;
                         var column = 0;
@@ -346,12 +346,20 @@ namespace SteelGrid.Plugin.Commands
             modelSpace.AppendEntity(netOutline);
             transaction.AddNewlyCreatedDBObject(netOutline, true);
 
-            // 外边框的每一段都标注尺寸，含缺口侧边和封头边。
+            // 边框标注改为按每块边框料矩形标注下料长度，序号与右侧边框下料表一致。
+            var frameTable = ReportTables.FrameTable(result, framePieces);
+            var frameRowIndexes = new Dictionary<string, int>();
+            for (var i = 0; i < frameTable.Count; i++)
+            {
+                frameRowIndexes[frameTable[i].Direction + "|" + ReportTables.Format(frameTable[i].Length)] = i + 1;
+            }
+
             DrawBorderDimensions(
                 modelSpace,
                 transaction,
                 result.Geometry,
-                GeometryOutlines.PlateOutline(result.Geometry),
+                framePieces,
+                frameRowIndexes,
                 insertionPoint,
                 plateHeight);
 
@@ -601,30 +609,35 @@ namespace SteelGrid.Plugin.Commands
 
             var plate = result.Geometry.Plate;
             var tableLeft = insertionPoint.X + plate.W + 260.0;
-            var tableWidth = 770.0;
-            var tableBottom = DrawTable(
+            var frameLayout = DrawTable(
                 modelSpace,
                 transaction,
                 tableLeft,
                 insertionPoint.Y,
-                ReportTables.FrameTable(result, framePieces),
-                "边框下料（共 " + ReportTables.FrameTable(result, framePieces).Sum(item => item.Count) + " 根）");
-            tableBottom = DrawTable(
+                frameTable,
+                "边框下料（共 " + frameTable.Sum(item => item.Count) + " 根）");
+            var verticalRows = ReportTables.ReportTable(result, "纵向");
+            var verticalLayout = DrawTable(
                 modelSpace,
                 transaction,
                 tableLeft,
-                tableBottom - 80.0,
-                ReportTables.ReportTable(result, "纵向"),
+                frameLayout.Bottom - 80.0,
+                verticalRows,
                 "纵向" + result.Spec.Vertical.TypeName + "下料（共 "
-                + ReportTables.ReportTable(result, "纵向").Sum(item => item.Count) + " 根）");
-            tableBottom = DrawTable(
+                + verticalRows.Sum(item => item.Count) + " 根）");
+            var horizontalRows = PluginTableRows.GetHorizontalRows(result);
+            var horizontalLayout = DrawTable(
                 modelSpace,
                 transaction,
                 tableLeft,
-                tableBottom - 80.0,
-                PluginTableRows.GetHorizontalRows(result),
+                verticalLayout.Bottom - 80.0,
+                horizontalRows,
                 "横向" + result.Spec.Horizontal.TypeName + "下料（共 "
-                + PluginTableRows.GetHorizontalRows(result).Sum(item => item.Count) + " 根）");
+                + horizontalRows.Sum(item => item.Count) + " 根）");
+            var tableBottom = horizontalLayout.Bottom;
+            var tableWidth = Math.Max(
+                frameLayout.Width,
+                Math.Max(verticalLayout.Width, horizontalLayout.Width));
 
             var groupLeft = insertionPoint.X - 260.0;
             var groupRight = tableLeft + tableWidth + 60.0;
@@ -642,6 +655,13 @@ namespace SteelGrid.Plugin.Commands
                 groupRight - groupLeft,
                 groupTop - groupBottom,
                 frameCount);
+        }
+
+        private sealed class TableLayout
+        {
+            public double Bottom { get; set; }
+
+            public double Width { get; set; }
         }
 
         private struct GroupExtents
@@ -690,359 +710,139 @@ namespace SteelGrid.Plugin.Commands
             return drawn;
         }
 
-        private struct WallSegment
-        {
-            public WallSegment(double x0, double y0, double x1, double y1)
-            {
-                X0 = x0;
-                Y0 = y0;
-                X1 = x1;
-                Y1 = y1;
-            }
-
-            public double X0 { get; }
-            public double Y0 { get; }
-            public double X1 { get; }
-            public double Y1 { get; }
-        }
-
-        private static List<WallSegment> BuildNotchWalls(PlateGeometry geo)
-        {
-            var walls = new List<WallSegment>();
-            var w = geo.Plate.W;
-            var h = geo.Plate.H;
-            foreach (var notch in geo.Notches)
-            {
-                var c = notch.Clear;
-                var edge = notch.Source.Edge;
-                if (edge == "top")
-                {
-                    if (!Touches(notch, "left"))
-                    {
-                        walls.Add(new WallSegment(c.X0, 0.0, c.X0, c.H));
-                    }
-
-                    if (!Touches(notch, "right"))
-                    {
-                        walls.Add(new WallSegment(c.X1, c.H, c.X1, 0.0));
-                    }
-                }
-                else if (edge == "bottom")
-                {
-                    if (!Touches(notch, "left"))
-                    {
-                        walls.Add(new WallSegment(c.X0, h, c.X0, h - c.H));
-                    }
-
-                    if (!Touches(notch, "right"))
-                    {
-                        walls.Add(new WallSegment(c.X1, h - c.H, c.X1, h));
-                    }
-                }
-                else if (edge == "left")
-                {
-                    if (!Touches(notch, "top"))
-                    {
-                        walls.Add(new WallSegment(0.0, c.Y0, c.W, c.Y0));
-                    }
-
-                    if (!Touches(notch, "bottom"))
-                    {
-                        walls.Add(new WallSegment(0.0, c.Y1, c.W, c.Y1));
-                    }
-                }
-                else
-                {
-                    if (!Touches(notch, "top"))
-                    {
-                        walls.Add(new WallSegment(w - c.W, c.Y0, w, c.Y0));
-                    }
-
-                    if (!Touches(notch, "bottom"))
-                    {
-                        walls.Add(new WallSegment(w - c.W, c.Y1, w, c.Y1));
-                    }
-                }
-            }
-
-            return walls;
-        }
-
-        private static bool Touches(NotchGeo notch, string edge)
-        {
-            return notch.Touches.Contains(edge);
-        }
-
-        private static bool IsNotchWall(List<WallSegment> walls, double x0, double y0, double x1, double y1)
-        {
-            const double eps = 1e-6;
-            foreach (var wall in walls)
-            {
-                var forward =
-                    Math.Abs(x0 - wall.X0) <= eps
-                    && Math.Abs(y0 - wall.Y0) <= eps
-                    && Math.Abs(x1 - wall.X1) <= eps
-                    && Math.Abs(y1 - wall.Y1) <= eps;
-                var backward =
-                    Math.Abs(x0 - wall.X1) <= eps
-                    && Math.Abs(y0 - wall.Y1) <= eps
-                    && Math.Abs(x1 - wall.X0) <= eps
-                    && Math.Abs(y1 - wall.Y0) <= eps;
-                if (forward || backward)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
         private static void DrawBorderDimensions(
             BlockTableRecord modelSpace,
             Transaction transaction,
             PlateGeometry geo,
-            List<OutlinePoint> points,
+            List<FramePiece> framePieces,
+            IReadOnlyDictionary<string, int> frameRowIndexes,
             Point3d insertionPoint,
             double plateHeight)
         {
-            if (points.Count < 2)
-            {
-                return;
-            }
-
             var w = geo.Plate.W;
             var h = geo.Plate.H;
-            var walls = BuildNotchWalls(geo);
 
-            var cadPoints = new List<Point3d>();
-            foreach (var point in points)
+            foreach (var piece in framePieces)
             {
-                cadPoints.Add(new Point3d(
-                    insertionPoint.X + point.X,
-                    ToCadY(insertionPoint.Y, plateHeight, point.Y),
-                    0.0));
-            }
+                var rect = piece.Rect;
+                if (rect.W <= 0.0 || rect.H <= 0.0)
+                {
+                    continue;
+                }
 
-            for (var i = 0; i < cadPoints.Count; i++)
-            {
-                var start = cadPoints[i];
-                var end = cadPoints[(i + 1) % cadPoints.Count];
-                var dx = end.X - start.X;
-                var dy = end.Y - start.Y;
-                var length = Math.Sqrt(dx * dx + dy * dy);
+                var length = Math.Max(rect.W, rect.H);
                 if (length <= 1e-6)
                 {
                     continue;
                 }
 
-                var layoutX0 = start.X - insertionPoint.X;
-                var layoutY0 = insertionPoint.Y - start.Y;
-                var layoutX1 = end.X - insertionPoint.X;
-                var layoutY1 = insertionPoint.Y - end.Y;
+                var key = piece.Direction + "|" + ReportTables.Format(length);
+                int rowIndex;
+                frameRowIndexes.TryGetValue(key, out rowIndex);
+                var text = "边框" + rowIndex + "  " + ReportTables.Format(length);
 
-                // 缺口内壁（深度边）不单独标注，深度统一在缺口中心标一次。
-                if (IsNotchWall(walls, layoutX0, layoutY0, layoutX1, layoutY1))
-                {
-                    continue;
-                }
-
-                var horizontal = Math.Abs(dy) <= 1e-6;
+                var horizontal = Math.Abs(rect.H - geo.Spec.FrameT) <= 1e-6;
                 if (horizontal)
                 {
-                    var above = (layoutY0 + layoutY1) / 2.0 <= h / 2.0;
-                    var dimY = above
-                        ? -BorderDimensionOffset
-                        : h + BorderDimensionOffset;
-                    var textY = above
-                        ? -BorderDimensionOffset - BorderTextExtraOffset
-                        : h + BorderDimensionOffset + BorderTextExtraOffset;
-                    AddLine(
-                        modelSpace,
-                        transaction,
-                        start.X,
-                        ToCadY(insertionPoint.Y, plateHeight, dimY),
-                        end.X,
-                        ToCadY(insertionPoint.Y, plateHeight, dimY),
-                        "边框标注");
-                    AddLine(
-                        modelSpace,
-                        transaction,
-                        start.X,
-                        start.Y,
-                        start.X,
-                        ToCadY(insertionPoint.Y, plateHeight, dimY),
-                        "边框标注");
-                    AddLine(
-                        modelSpace,
-                        transaction,
-                        end.X,
-                        end.Y,
-                        end.X,
-                        ToCadY(insertionPoint.Y, plateHeight, dimY),
-                        "边框标注");
+                    var textY = BorderLabelY(geo, rect, h);
+                    var x0 = insertionPoint.X + rect.X0;
+                    var x1 = insertionPoint.X + rect.X1;
                     AddText(
                         modelSpace,
                         transaction,
-                        (start.X + end.X) / 2.0,
+                        (x0 + x1) / 2.0,
                         ToCadY(insertionPoint.Y, plateHeight, textY),
-                        ReportTables.Format(length),
-                        20.0,
+                        text,
+                        15.0,
                         "边框标注",
                         true);
                 }
                 else
                 {
-                    var left = (layoutX0 + layoutX1) / 2.0 <= w / 2.0;
-                    var dimX = left
-                        ? -BorderDimensionOffset
-                        : w + BorderDimensionOffset;
-                    var textX = left
-                        ? -BorderDimensionOffset - BorderTextExtraOffset
-                        : w + BorderDimensionOffset + BorderTextExtraOffset;
-                    AddLine(
-                        modelSpace,
-                        transaction,
-                        insertionPoint.X + dimX,
-                        start.Y,
-                        insertionPoint.X + dimX,
-                        end.Y,
-                        "边框标注");
-                    AddLine(
-                        modelSpace,
-                        transaction,
-                        start.X,
-                        start.Y,
-                        insertionPoint.X + dimX,
-                        start.Y,
-                        "边框标注");
-                    AddLine(
-                        modelSpace,
-                        transaction,
-                        end.X,
-                        end.Y,
-                        insertionPoint.X + dimX,
-                        end.Y,
-                        "边框标注");
+                    var textX = BorderLabelX(geo, rect, w);
+                    var y0 = ToCadY(insertionPoint.Y, plateHeight, rect.Y0);
+                    var y1 = ToCadY(insertionPoint.Y, plateHeight, rect.Y1);
                     AddText(
                         modelSpace,
                         transaction,
                         insertionPoint.X + textX,
-                        (start.Y + end.Y) / 2.0,
-                        ReportTables.Format(length),
-                        20.0,
+                        (y0 + y1) / 2.0,
+                        text,
+                        15.0,
                         "边框标注",
                         true,
                         Math.PI / 2.0);
                 }
             }
+        }
 
+        private static double BorderLabelY(PlateGeometry geo, Rect rect, double h)
+        {
+            const double eps = 1e-6;
             foreach (var notch in geo.Notches)
             {
-                DrawNotchDepthDimension(
-                    modelSpace,
-                    transaction,
-                    geo,
-                    notch,
-                    insertionPoint,
-                    plateHeight);
+                var c = notch.Clear;
+                var overlapsX = c.X0 < rect.X1 - eps && rect.X0 < c.X1 - eps;
+                if (Math.Abs(c.Y1 - rect.Y0) <= eps && overlapsX)
+                {
+                    return rect.Y0 - BorderTextOffset;
+                }
+
+                if (Math.Abs(c.Y0 - rect.Y1) <= eps && overlapsX)
+                {
+                    return rect.Y1 + BorderTextOffset;
+                }
             }
+
+            if (rect.Y0 <= eps)
+            {
+                return -BorderTextOffset;
+            }
+
+            if (rect.Y1 >= h - eps)
+            {
+                return h + BorderTextOffset;
+            }
+
+            return (rect.Y0 + rect.Y1) / 2.0 <= h / 2.0
+                ? rect.Y0 - BorderTextOffset
+                : rect.Y1 + BorderTextOffset;
         }
 
-        private static void DrawNotchDepthDimension(
-            BlockTableRecord modelSpace,
-            Transaction transaction,
-            PlateGeometry geo,
-            NotchGeo notch,
-            Point3d insertionPoint,
-            double plateHeight)
+        private static double BorderLabelX(PlateGeometry geo, Rect rect, double w)
         {
-            var c = notch.Clear;
-            var w = geo.Plate.W;
-            var h = geo.Plate.H;
-            var edge = notch.Source.Edge;
+            const double eps = 1e-6;
+            foreach (var notch in geo.Notches)
+            {
+                var c = notch.Clear;
+                var overlapsY = c.Y0 < rect.Y1 - eps && rect.Y0 < c.Y1 - eps;
+                if (Math.Abs(c.X1 - rect.X0) <= eps && overlapsY)
+                {
+                    return rect.X0 - BorderTextOffset;
+                }
 
-            double lineX1;
-            double lineY1;
-            double lineX2;
-            double lineY2;
-            double textX;
-            double textY;
-            double depth;
-            var vertical = true;
-
-            if (edge == "top")
-            {
-                var centerX = (c.X0 + c.X1) / 2.0;
-                lineX1 = centerX;
-                lineY1 = 0.0;
-                lineX2 = centerX;
-                lineY2 = c.H;
-                textX = centerX + 25.0;
-                textY = c.H / 2.0;
-                depth = c.H;
-            }
-            else if (edge == "bottom")
-            {
-                var centerX = (c.X0 + c.X1) / 2.0;
-                lineX1 = centerX;
-                lineY1 = h - c.H;
-                lineX2 = centerX;
-                lineY2 = h;
-                textX = centerX + 25.0;
-                textY = h - c.H / 2.0;
-                depth = c.H;
-            }
-            else if (edge == "left")
-            {
-                var centerY = (c.Y0 + c.Y1) / 2.0;
-                lineX1 = 0.0;
-                lineY1 = centerY;
-                lineX2 = c.W;
-                lineY2 = centerY;
-                textX = c.W / 2.0;
-                textY = centerY + 25.0;
-                depth = c.W;
-                vertical = false;
-            }
-            else
-            {
-                var centerY = (c.Y0 + c.Y1) / 2.0;
-                lineX1 = w - c.W;
-                lineY1 = centerY;
-                lineX2 = w;
-                lineY2 = centerY;
-                textX = w - c.W / 2.0;
-                textY = centerY + 25.0;
-                depth = c.W;
-                vertical = false;
+                if (Math.Abs(c.X0 - rect.X1) <= eps && overlapsY)
+                {
+                    return rect.X1 + BorderTextOffset;
+                }
             }
 
-            if (depth <= 1e-9)
+            if (rect.X0 <= eps)
             {
-                return;
+                return -BorderTextOffset;
             }
 
-            AddLine(
-                modelSpace,
-                transaction,
-                insertionPoint.X + lineX1,
-                ToCadY(insertionPoint.Y, plateHeight, lineY1),
-                insertionPoint.X + lineX2,
-                ToCadY(insertionPoint.Y, plateHeight, lineY2),
-                "边框标注");
-            AddText(
-                modelSpace,
-                transaction,
-                insertionPoint.X + textX,
-                ToCadY(insertionPoint.Y, plateHeight, textY),
-                ReportTables.Format(depth),
-                20.0,
-                "边框标注",
-                true,
-                vertical ? Math.PI / 2.0 : 0.0);
+            if (rect.X1 >= w - eps)
+            {
+                return w + BorderTextOffset;
+            }
+
+            return (rect.X0 + rect.X1) / 2.0 <= w / 2.0
+                ? rect.X0 - BorderTextOffset
+                : rect.X1 + BorderTextOffset;
         }
 
-        private static double DrawTable(
+        private static TableLayout DrawTable(
             BlockTableRecord modelSpace,
             Transaction transaction,
             double left,
@@ -1050,10 +850,11 @@ namespace SteelGrid.Plugin.Commands
             List<ReportItem> rows,
             string title)
         {
-            var widths = new[] { 60.0, 110.0, 100.0, 80.0, 80.0, 110.0, 110.0, 70.0 };
+            var widths = ComputeTableWidths(rows);
             var width = widths.Sum();
-            var headerHeight = 42.0;
-            var rowHeight = 34.0;
+            var compact = rows.Count > 12;
+            var headerHeight = compact ? 36.0 : 42.0;
+            var rowHeight = compact ? (rows.Count > 24 ? 26.0 : 30.0) : 34.0;
             var height = headerHeight + rowHeight * Math.Max(rows.Count, 1);
             var bottom = top - height;
 
@@ -1103,7 +904,72 @@ namespace SteelGrid.Plugin.Commands
                 AddText(modelSpace, transaction, boundaries[7] + 10.0, textY, rows[i].Holes, 18.0, "表格");
             }
 
-            return bottom;
+            return new TableLayout { Bottom = bottom, Width = width };
+        }
+
+        private static double[] ComputeTableWidths(List<ReportItem> rows)
+        {
+            var headers = new[] { "序号", "规格", "尺寸", "方向", "数量", "首孔距", "尾孔距", "孔数" };
+            var minimums = new[] { 60.0, 110.0, 100.0, 80.0, 80.0, 110.0, 110.0, 70.0 };
+            var widths = new double[8];
+            for (var c = 0; c < 8; c++)
+            {
+                var needed = EstimateTextWidth(headers[c], 18.0) + 20.0;
+                if (c == 0)
+                {
+                    needed = Math.Max(
+                        needed,
+                        EstimateTextWidth(rows.Count.ToString(CultureInfo.InvariantCulture), 18.0) + 20.0);
+                }
+
+                foreach (var row in rows)
+                {
+                    needed = Math.Max(needed, EstimateTextWidth(ColumnText(row, c), 18.0) + 20.0);
+                }
+
+                widths[c] = Math.Max(minimums[c], needed);
+            }
+
+            return widths;
+        }
+
+        private static string ColumnText(ReportItem row, int column)
+        {
+            switch (column)
+            {
+                case 1:
+                    return RowSpec(row);
+                case 2:
+                    return ReportTables.Format(row.Length);
+                case 3:
+                    return row.Direction;
+                case 4:
+                    return row.Count.ToString(CultureInfo.InvariantCulture);
+                case 5:
+                    return row.FirstHole;
+                case 6:
+                    return row.LastHole;
+                case 7:
+                    return row.Holes;
+                default:
+                    return "";
+            }
+        }
+
+        private static double EstimateTextWidth(string text, double height)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return 0.0;
+            }
+
+            var units = 0.0;
+            foreach (var ch in text)
+            {
+                units += ch > 127 ? 1.0 : 0.58;
+            }
+
+            return units * height;
         }
 
         private static string RowSpec(ReportItem item)
