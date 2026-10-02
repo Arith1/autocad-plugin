@@ -21,7 +21,7 @@
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
-    <PluginVersion>1.03</PluginVersion>
+    <PluginVersion>2.0</PluginVersion>
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>bin\Release\v$(PluginVersion)\</OutputPath>

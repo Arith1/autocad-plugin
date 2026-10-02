@@ -29,6 +29,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="DxfReader.cs" />
+    <Compile Include="FrameSvg.cs" />
+    <Compile Include="OutlineTest.cs" />
+    <Compile Include="PolygonSelfTest.cs" />
     <Compile Include="Program.cs" />
   </ItemGroup>
 

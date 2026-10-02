@@ -13,12 +13,12 @@ namespace SteelGrid.Core.Layout
         {
             var geo = GeometryBuilder.Build(spec);
             var net = geo.Net;
-            var vCenters = PlaceCenters(
+            var vCenters = CenterPlacer.Place(
                 net.X0,
                 net.X1,
                 spec.Vertical.Thickness,
                 spec.Vertical.Pitch);
-            var hCenters = PlaceCenters(
+            var hCenters = CenterPlacer.Place(
                 net.Y0,
                 net.Y1,
                 spec.Horizontal.Thickness,
@@ -50,41 +50,15 @@ namespace SteelGrid.Core.Layout
 
             foreach (var bar in verticalBars)
             {
-                SetHoleGroups(bar, horizontalBars);
+                BarHoles.Assign(bar, horizontalBars);
             }
 
             foreach (var bar in horizontalBars)
             {
-                SetHoleGroups(bar, verticalBars);
+                BarHoles.Assign(bar, verticalBars);
             }
 
             return new LayoutResult(geo, verticalBars, horizontalBars);
-        }
-
-        private static List<double> PlaceCenters(double lo, double hi, double thickness, double pitch)
-        {
-            var span = hi - lo;
-            if (span <= Eps || thickness > span + Eps)
-            {
-                return new List<double>();
-            }
-
-            var count = Math.Max(1, (int)Math.Floor(span / pitch + Eps));
-            var margin = (span - (count - 1) * pitch - thickness) / 2.0;
-            if (margin < -Eps)
-            {
-                count = Math.Max(1, count - 1);
-                margin = (span - (count - 1) * pitch - thickness) / 2.0;
-            }
-
-            var first = lo + margin + thickness / 2.0;
-            var result = new List<double>();
-            for (var i = 0; i < count; i++)
-            {
-                result.Add(first + i * pitch);
-            }
-
-            return result;
         }
 
         private static Tuple<double, double> Band(double center, double thickness)
@@ -234,19 +208,6 @@ namespace SteelGrid.Core.Layout
             return segments;
         }
 
-        private static bool Covers(List<Segment> segments, double value)
-        {
-            foreach (var segment in segments)
-            {
-                if (segment.Contains(value))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
         private static void SetWarnings(Bar bar, PlateGeometry geo)
         {
             var edgeNames = new Dictionary<string, string>
@@ -321,22 +282,5 @@ namespace SteelGrid.Core.Layout
             return notch.Touches.Contains(edge);
         }
 
-        private static void SetHoleGroups(Bar bar, List<Bar> crossBars)
-        {
-            bar.HoleGroups.Clear();
-            foreach (var segment in bar.Segments)
-            {
-                var holes = new List<double>();
-                foreach (var cross in crossBars)
-                {
-                    if (segment.Contains(cross.Center) && Covers(cross.Segments, bar.Center))
-                    {
-                        holes.Add(cross.Center);
-                    }
-                }
-
-                bar.HoleGroups.Add(holes);
-            }
-        }
     }
 }

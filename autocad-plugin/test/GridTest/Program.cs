@@ -17,13 +17,28 @@ namespace GridTest
         {
             try
             {
-                var path = args.Length > 0 ? args[0] : @"C:\Users\Miyna\Desktop\三个图形.dxf";
-                var outlines = ReadOutlines(path);
+                if (args.Length > 0 && args[0] == "--geom")
+                {
+                    Environment.ExitCode = PolygonSelfTest.Run() ? 0 : 1;
+                    return;
+                }
+
+                if (args.Length > 0 && args[0] == "--outline")
+                {
+                    var outlinePath = args.Length > 1
+                        ? args[1]
+                        : @"C:\Users\Miyna\Desktop\待排条\异形图.dxf";
+                    Environment.ExitCode = OutlineTest.Run(outlinePath);
+                    return;
+                }
+
+                var path = args.Length > 0 ? args[0] : @"C:\Users\Miyna\Desktop\待排条\三个图形.dxf";
+                var outlines = DxfReader.Read(path);
                 Console.WriteLine("outlines: " + outlines.Count);
 
             for (var i = 0; i < outlines.Count; i++)
             {
-                var points = outlines[i];
+                var points = ToPoints(outlines[i].Points);
                 double minX = double.MaxValue, minY = double.MaxValue;
                 double maxX = double.MinValue, maxY = double.MinValue;
                 foreach (var point in points)
@@ -205,122 +220,15 @@ namespace GridTest
             public double Y { get; }
         }
 
-        private static List<List<Pt>> ReadOutlines(string path)
+        private static List<Pt> ToPoints(List<Point2D> points)
         {
-            var lines = File.ReadAllLines(path);
-            var groups = new List<Tuple<int, string>>();
-            for (var i = 0; i + 1 < lines.Length; i += 2)
+            var result = new List<Pt>();
+            foreach (var point in points)
             {
-                int code;
-                if (!int.TryParse(lines[i].Trim(), out code))
-                {
-                    continue;
-                }
-
-                groups.Add(Tuple.Create(code, lines[i + 1].Trim()));
-            }
-
-            var entities = new List<Dictionary<int, List<string>>>();
-            Dictionary<int, List<string>> current = null;
-            var inEntities = false;
-            var sectionCode = false;
-            foreach (var group in groups)
-            {
-                if (group.Item1 == 0 && group.Item2 == "SECTION")
-                {
-                    sectionCode = true;
-                    inEntities = false;
-                    current = null;
-                    continue;
-                }
-
-                if (sectionCode && group.Item1 == 2)
-                {
-                    inEntities = group.Item2 == "ENTITIES";
-                    sectionCode = false;
-                    continue;
-                }
-
-                if (group.Item1 == 0 && group.Item2 == "ENDSEC")
-                {
-                    sectionCode = false;
-                    inEntities = false;
-                    current = null;
-                    continue;
-                }
-
-                if (!inEntities)
-                {
-                    continue;
-                }
-
-                if (group.Item1 == 0)
-                {
-                    current = new Dictionary<int, List<string>>();
-                    entities.Add(current);
-                    continue;
-                }
-
-                if (current != null)
-                {
-                    if (!current.ContainsKey(group.Item1))
-                    {
-                        current[group.Item1] = new List<string>();
-                    }
-
-                    current[group.Item1].Add(group.Item2);
-                }
-            }
-
-            var result = new List<List<Pt>>();
-            foreach (var entity in entities)
-            {
-                if (!entity.ContainsKey(10) || !entity.ContainsKey(20))
-                {
-                    continue;
-                }
-
-                var xs = entity[10];
-                var ys = entity[20];
-                if (xs.Count != ys.Count || xs.Count < 3)
-                {
-                    continue;
-                }
-
-                var points = new List<Pt>();
-                for (var i = 0; i < xs.Count; i++)
-                {
-                    double x;
-                    double y;
-                    if (!double.TryParse(xs[i], NumberStyles.Float, CultureInfo.InvariantCulture, out x)
-                        || !double.TryParse(ys[i], NumberStyles.Float, CultureInfo.InvariantCulture, out y))
-                    {
-                        continue;
-                    }
-
-                    points.Add(new Pt(x, y));
-                }
-
-                if (points.Count >= 3 && Area(points) > 1e-6)
-                {
-                    result.Add(points);
-                }
+                result.Add(new Pt(point.X, point.Y));
             }
 
             return result;
-        }
-
-        private static double Area(List<Pt> points)
-        {
-            var sum = 0.0;
-            for (var i = 0; i < points.Count; i++)
-            {
-                var a = points[i];
-                var b = points[(i + 1) % points.Count];
-                sum += a.X * b.Y - b.X * a.Y;
-            }
-
-            return Math.Abs(sum) / 2.0;
         }
 
         private sealed class Run

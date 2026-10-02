@@ -28,7 +28,7 @@ namespace SteelGrid.Plugin.Commands
         public static void ShowInfo()
         {
             var editor = GetEditor();
-            editor.WriteMessage("\n钢格板自动排条插件 正式版 1.03：支持凹口、缺角和凸出图形，可框选多个图形批量排条。");
+            editor.WriteMessage("\n钢格板自动排条插件 正式版 2.0：矩形（凹口/缺角/凸出）走原逻辑；梯形/平行四边形按多边形净空排条，斜边处按短边切平下料；弧形图形提示跳过。");
         }
 
         [CommandMethod("GPGRIDSET")]
@@ -116,13 +116,38 @@ namespace SteelGrid.Plugin.Commands
                     return centerBY.CompareTo(centerAY);
                 });
 
-                var results = new List<LayoutResult>();
+                var results = new List<LayoutItem>();
+                var skipped = 0;
                 foreach (var item in pending)
                 {
                     var id = item.Item1;
                     var outline = item.Item2;
                     try
                     {
+                        if (OutlineReader.HasArc(outline))
+                        {
+                            skipped++;
+                            editor.WriteMessage("\n图形 {0} 跳过：弧形暂不支持，不参与排条", id.Handle);
+                            continue;
+                        }
+
+                        var parsed = OutlineReader.ReadShape(outline);
+                        if (parsed.Supported
+                            && parsed.Shape.Kind != OutlineKind.Rectangle
+                            && !IsAxisAlignedOutline(outline))
+                        {
+                            var outlineSpec = BuildSpec(outline);
+                            editor.WriteMessage(
+                                "\n识别：{0}轮廓，局部 {1:0.##} x {2:0.##}，旋转 {3:0.##}°，受力 {4}",
+                                parsed.Shape.Kind == OutlineKind.Trapezoid ? "梯形" : "平行四边形",
+                                parsed.Shape.Bounds.W,
+                                parsed.Shape.Bounds.H,
+                                parsed.Shape.RotationDegrees,
+                                outlineSpec.LoadDirection == LoadDirection.Vertical ? "垂直" : "水平");
+                            results.Add(new LayoutItem(OutlineLayoutEngine.Layout(parsed.Shape, outlineSpec)));
+                            continue;
+                        }
+
                         var spec = BuildSpec(outline);
                         editor.WriteMessage(
                             "\n识别：板件 {0:0.##} x {1:0.##}，缺口 {2} 个，受力 {3}",
@@ -142,7 +167,7 @@ namespace SteelGrid.Plugin.Commands
                                 notch.Depth);
                         }
 
-                        results.Add(LayoutEngine.Layout(spec));
+                        results.Add(new LayoutItem(LayoutEngine.Layout(spec)));
                     }
                     catch (System.Exception ex)
                     {
@@ -152,7 +177,9 @@ namespace SteelGrid.Plugin.Commands
 
                 if (results.Count == 0)
                 {
-                    editor.WriteMessage("\n选区内没有可用的闭合多段线。");
+                    editor.WriteMessage(skipped > 0
+                        ? $"\n选区内没有可用的闭合多段线（跳过 {skipped} 个：弧形暂不支持）。"
+                        : "\n选区内没有可用的闭合多段线。");
                     return;
                 }
 
@@ -182,7 +209,7 @@ namespace SteelGrid.Plugin.Commands
                         foreach (var result in results)
                         {
                             var insertion = new Point3d(columnX, cursorY, 0.0);
-                            var extents = DrawResult(document.Database, transaction, result, insertion);
+                            var extents = DrawItem(document.Database, transaction, result, insertion);
                             totalFrames += extents.FrameCount;
                             totalSegments += result.SegmentCount;
                             columnMaxWidth = Math.Max(columnMaxWidth, extents.Width);
@@ -212,7 +239,7 @@ namespace SteelGrid.Plugin.Commands
                         foreach (var result in results)
                         {
                             var insertion = new Point3d(cursorX, rowY, 0.0);
-                            var extents = DrawResult(document.Database, transaction, result, insertion);
+                            var extents = DrawItem(document.Database, transaction, result, insertion);
                             totalFrames += extents.FrameCount;
                             totalSegments += result.SegmentCount;
                             rowMaxHeight = Math.Max(rowMaxHeight, extents.Height);
@@ -233,7 +260,9 @@ namespace SteelGrid.Plugin.Commands
                     }
 
                     transaction.Commit();
-                    editor.WriteMessage($"\n排条完成：共 {results.Count} 个图形，边框料 {totalFrames} 个矩形，段数 {totalSegments}");
+                    editor.WriteMessage(skipped > 0
+                        ? $"\n排条完成：共 {results.Count} 个图形，边框料 {totalFrames} 个矩形，段数 {totalSegments}；跳过 {skipped} 个（弧形暂不支持）"
+                        : $"\n排条完成：共 {results.Count} 个图形，边框料 {totalFrames} 个矩形，段数 {totalSegments}");
                 }
                 catch (System.Exception ex)
                 {
@@ -267,6 +296,32 @@ namespace SteelGrid.Plugin.Commands
             return result.Value.GetObjectIds();
         }
 
+        /// <summary>
+        /// 轮廓是否全是水平/竖直边（矩形 + 缺口/缺角都属于这一类）。
+        /// 这类图形交给原有矩形路径，避免凸包拆分在缺角处"造"出一条斜边。
+        /// </summary>
+        private static bool IsAxisAlignedOutline(Polyline outline)
+        {
+            if (outline == null || outline.NumberOfVertices < 3)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < outline.NumberOfVertices; i++)
+            {
+                var a = outline.GetPoint2dAt(i);
+                var b = outline.GetPoint2dAt((i + 1) % outline.NumberOfVertices);
+                var dx = Math.Abs(b.X - a.X);
+                var dy = Math.Abs(b.Y - a.Y);
+                if (dx > 1e-6 && dy > 1e-6)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         private static Spec BuildSpec(Polyline outline)
         {
             var bounds = outline.Bounds.Value;
@@ -290,32 +345,7 @@ namespace SteelGrid.Plugin.Commands
             LayoutResult result,
             Point3d insertionPoint)
         {
-            var layerTable = (LayerTable)transaction.GetObject(database.LayerTableId, OpenMode.ForWrite);
-            var layerColors = new Dictionary<string, short>
-            {
-                { "外轮廓", 1 },
-                { "内边框", 5 },
-                { "纵条", 3 },
-                { "横条", 6 },
-                { "边框标注", 5 },
-                { "纵条标注", 3 },
-                { "横条标注", 6 },
-                { "横条首尾孔距标注", 6 },
-                { "纵条首尾孔距标注", 3 },
-                { "表格", 7 },
-                { "分组边框", 8 }
-            };
-
-            foreach (var item in layerColors)
-            {
-                if (!layerTable.Has(item.Key))
-                {
-                    var layer = new LayerTableRecord { Name = item.Key };
-                    layer.Color = Color.FromColorIndex(ColorMethod.ByAci, item.Value);
-                    layerTable.Add(layer);
-                    transaction.AddNewlyCreatedDBObject(layer, true);
-                }
-            }
+            EnsureLayers(database, transaction);
 
             var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
             var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
@@ -1181,6 +1211,416 @@ namespace SteelGrid.Plugin.Commands
             }
 
             return document.Editor;
+        }
+
+        private sealed class LayoutItem
+        {
+            public LayoutItem(LayoutResult rectangle)
+            {
+                Rectangle = rectangle;
+            }
+
+            public LayoutItem(OutlineLayoutResult outline)
+            {
+                Outline = outline;
+            }
+
+            public LayoutResult Rectangle { get; }
+
+            public OutlineLayoutResult Outline { get; }
+
+            public int SegmentCount => Outline != null ? Outline.SegmentCount : Rectangle.SegmentCount;
+        }
+
+        private static GroupExtents DrawItem(
+            Database database,
+            Transaction transaction,
+            LayoutItem item,
+            Point3d insertionPoint)
+        {
+            return item.Outline != null
+                ? DrawOutlineResult(database, transaction, item.Outline, insertionPoint)
+                : DrawResult(database, transaction, item.Rectangle, insertionPoint);
+        }
+
+        private static void EnsureLayers(Database database, Transaction transaction)
+        {
+            var layerTable = (LayerTable)transaction.GetObject(database.LayerTableId, OpenMode.ForWrite);
+            var layerColors = new Dictionary<string, short>
+            {
+                { "外轮廓", 1 },
+                { "内边框", 5 },
+                { "纵条", 3 },
+                { "横条", 6 },
+                { "边框标注", 5 },
+                { "纵条标注", 3 },
+                { "横条标注", 6 },
+                { "横条首尾孔距标注", 6 },
+                { "纵条首尾孔距标注", 3 },
+                { "表格", 7 },
+                { "分组边框", 8 }
+            };
+
+            foreach (var item in layerColors)
+            {
+                if (layerTable.Has(item.Key))
+                {
+                    continue;
+                }
+
+                var layer = new LayerTableRecord { Name = item.Key };
+                layer.Color = Color.FromColorIndex(ColorMethod.ByAci, item.Value);
+                layerTable.Add(layer);
+                transaction.AddNewlyCreatedDBObject(layer, true);
+            }
+        }
+
+        /// <summary>
+        /// 多边形轮廓（梯形/平行四边形）的排条图：轮廓、净空、边框料、条、标注、下料表和分组框。
+        /// 局部坐标经过轮廓旋转，绘制时按轮廓的局部坐标轴映射回 AutoCAD 坐标。
+        /// </summary>
+        private static GroupExtents DrawOutlineResult(
+            Database database,
+            Transaction transaction,
+            OutlineLayoutResult layout,
+            Point3d insertionPoint)
+        {
+            var shape = layout.Shape;
+            var spec = layout.Spec;
+            EnsureLayers(database, transaction);
+
+            var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
+            var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+
+            // 局部包围盒经过旋转后不一定从插入点向右下角展开，这里把图形左上角对齐到插入点。
+            var origin = AlignOutlineInsertion(layout, insertionPoint);
+
+            // 边框料：每条边一根，斜边料是旋转矩形。
+            var framePieces = PolygonFrameSplitter.GetPieces(layout.Plate, layout.Net, spec.FrameT, spec.LoadDirection);
+            foreach (var piece in framePieces)
+            {
+                AppendMappedPolyline(modelSpace, transaction, piece.Corners(), shape, origin, "外轮廓");
+            }
+
+            AppendMappedPolyline(modelSpace, transaction, layout.Plate.Vertices, shape, origin, "外轮廓");
+            AppendMappedPolyline(modelSpace, transaction, layout.Net.Vertices, shape, origin, "内边框");
+
+            // 边框标注：文字放在边框料外侧，序号与边框下料表一致。
+            var frameTable = ReportTables.FrameTable(framePieces);
+            var frameRowIndexes = new Dictionary<string, int>();
+            for (var i = 0; i < frameTable.Count; i++)
+            {
+                frameRowIndexes[frameTable[i].Direction + "|" + ReportTables.Format(frameTable[i].Length)] = i + 1;
+            }
+
+            foreach (var piece in framePieces)
+            {
+                var radians = piece.AngleDeg * Math.PI / 180.0;
+                var offset = piece.Thickness / 2.0 + BorderTextOffset;
+                var textPoint = MapPoint(
+                    shape,
+                    origin,
+                    piece.Center.X + piece.Outward.X * offset,
+                    piece.Center.Y + piece.Outward.Y * offset);
+                var index = frameRowIndexes[piece.Direction + "|" + ReportTables.Format(piece.Length)];
+                AddText(
+                    modelSpace,
+                    transaction,
+                    textPoint.X,
+                    textPoint.Y,
+                    "边框" + index + "  " + ReportTables.Format(piece.Length),
+                    15.0,
+                    "边框标注",
+                    true,
+                    TextRotation(shape, radians));
+            }
+
+            // 条：斜边截断已按短边切平，每段本身就是下料矩形。
+            foreach (var bar in layout.VerticalBars)
+            {
+                for (var s = 0; s < bar.Segments.Count; s++)
+                {
+                    var segment = bar.Segments[s];
+                    var half = bar.Thickness / 2.0;
+                    var corners = new List<Point2D>
+                    {
+                        new Point2D(bar.Center - half, segment.A),
+                        new Point2D(bar.Center + half, segment.A),
+                        new Point2D(bar.Center + half, segment.B),
+                        new Point2D(bar.Center - half, segment.B)
+                    };
+                    AppendMappedPolyline(modelSpace, transaction, corners, shape, origin, "纵条");
+
+                    var labelY = bar.Full ? -BarLabelOffset : (segment.A + segment.B) / 2.0;
+                    var labelPoint = MapPoint(shape, origin, bar.Center, labelY);
+                    AddText(
+                        modelSpace,
+                        transaction,
+                        labelPoint.X,
+                        labelPoint.Y,
+                        ReportTables.Format(segment.Length),
+                        18.0,
+                        "纵条标注",
+                        true,
+                        TextRotation(shape, Math.PI / 2.0));
+                }
+            }
+
+            foreach (var bar in layout.HorizontalBars)
+            {
+                for (var s = 0; s < bar.Segments.Count; s++)
+                {
+                    var segment = bar.Segments[s];
+                    var half = bar.Thickness / 2.0;
+                    var corners = new List<Point2D>
+                    {
+                        new Point2D(segment.A, bar.Center - half),
+                        new Point2D(segment.B, bar.Center - half),
+                        new Point2D(segment.B, bar.Center + half),
+                        new Point2D(segment.A, bar.Center + half)
+                    };
+                    AppendMappedPolyline(modelSpace, transaction, corners, shape, origin, "横条");
+
+                    var labelX = bar.Full ? layout.Plate.Bounds.W + BarLabelOffset : (segment.A + segment.B) / 2.0;
+                    var labelPoint = MapPoint(shape, origin, labelX, bar.Center);
+                    AddText(
+                        modelSpace,
+                        transaction,
+                        labelPoint.X,
+                        labelPoint.Y,
+                        ReportTables.Format(segment.Length),
+                        18.0,
+                        "横条标注",
+                        true,
+                        TextRotation(shape, 0.0));
+                }
+            }
+
+            DrawOutlineHoleAnnotations(modelSpace, transaction, layout, shape, origin);
+
+            double minX = double.MaxValue, minY = double.MaxValue;
+            double maxX = double.MinValue, maxY = double.MinValue;
+            foreach (var vertex in layout.Plate.Vertices)
+            {
+                var point = MapPoint(shape, origin, vertex.X, vertex.Y);
+                minX = Math.Min(minX, point.X);
+                minY = Math.Min(minY, point.Y);
+                maxX = Math.Max(maxX, point.X);
+                maxY = Math.Max(maxY, point.Y);
+            }
+
+            var tableLeft = maxX + 260.0;
+            var frameLayout = DrawTable(
+                modelSpace,
+                transaction,
+                tableLeft,
+                maxY,
+                frameTable,
+                "边框下料（共 " + frameTable.Sum(item => item.Count) + " 根）");
+            var verticalRows = ReportTables.ReportTable(layout.Bars, "纵向");
+            var verticalLayout = DrawTable(
+                modelSpace,
+                transaction,
+                tableLeft,
+                frameLayout.Bottom - 80.0,
+                verticalRows,
+                "纵向" + spec.Vertical.TypeName + "下料（共 " + verticalRows.Sum(item => item.Count) + " 根）");
+            var horizontalRows = PluginTableRows.GetHorizontalRows(layout.Bars);
+            var horizontalLayout = DrawTable(
+                modelSpace,
+                transaction,
+                tableLeft,
+                verticalLayout.Bottom - 80.0,
+                horizontalRows,
+                "横向" + spec.Horizontal.TypeName + "下料（共 " + horizontalRows.Sum(item => item.Count) + " 根）");
+            var tableBottom = horizontalLayout.Bottom;
+            var tableWidth = Math.Max(frameLayout.Width, Math.Max(verticalLayout.Width, horizontalLayout.Width));
+
+            var groupLeft = minX - 260.0;
+            var groupRight = tableLeft + tableWidth + 60.0;
+            var groupTop = maxY + 220.0;
+            var groupBottom = Math.Min(minY - 220.0, tableBottom - 60.0);
+            var border = CreateRectangle(
+                groupLeft,
+                groupBottom,
+                groupRight - groupLeft,
+                groupTop - groupBottom,
+                "分组边框");
+            modelSpace.AppendEntity(border);
+            transaction.AddNewlyCreatedDBObject(border, true);
+            return new GroupExtents(groupRight - groupLeft, groupTop - groupBottom, framePieces.Count);
+        }
+
+        private static void DrawOutlineHoleAnnotations(
+            BlockTableRecord modelSpace,
+            Transaction transaction,
+            OutlineLayoutResult layout,
+            OutlineShape shape,
+            Point3d origin)
+        {
+            var spec = layout.Spec;
+            foreach (var annotation in ReportTables.HoleAnnotations(layout.Bars))
+            {
+                if (annotation.Direction == "横向" && spec.Horizontal.Type == BarType.TwistedSquare)
+                {
+                    continue;
+                }
+
+                if (annotation.Direction == "纵向" && spec.Vertical.Type == BarType.TwistedSquare)
+                {
+                    continue;
+                }
+
+                if (annotation.Direction == "横向")
+                {
+                    var layer = "横条首尾孔距标注";
+                    var pitch = spec.Horizontal.Pitch;
+                    var lineY = annotation.BarCenter + pitch / 2.0;
+                    var textY = lineY + pitch / 4.0;
+                    AddMappedLine(modelSpace, transaction, shape, origin, annotation.SegmentA, lineY, annotation.FirstPosition, lineY, layer);
+                    AddMappedLine(modelSpace, transaction, shape, origin, annotation.LastPosition, lineY, annotation.SegmentB, lineY, layer);
+                    AddMappedTick(modelSpace, transaction, shape, origin, annotation.FirstPosition, lineY, true, layer);
+                    AddMappedTick(modelSpace, transaction, shape, origin, annotation.LastPosition, lineY, true, layer);
+                    AddMappedTick(modelSpace, transaction, shape, origin, annotation.SegmentB, lineY, true, layer);
+                    // 局部坐标 Y 向上：靠上的一端是 B 端，按矩形路径语义"首"在靠上一侧
+                    var firstPoint = MapPoint(shape, origin, (annotation.LastPosition + annotation.SegmentB) / 2.0, textY);
+                    AddText(
+                        modelSpace, transaction, firstPoint.X, firstPoint.Y,
+                        "首" + ReportTables.Format(annotation.LastHole), 13.0, layer, true, TextRotation(shape, 0.0));
+                    var lastPoint = MapPoint(shape, origin, (annotation.SegmentA + annotation.FirstPosition) / 2.0, textY);
+                    AddText(
+                        modelSpace, transaction, lastPoint.X, lastPoint.Y,
+                        "尾" + ReportTables.Format(annotation.FirstHole), 13.0, layer, true, TextRotation(shape, 0.0));
+                }
+                else
+                {
+                    var layer = "纵条首尾孔距标注";
+                    var pitch = spec.Vertical.Pitch;
+                    var lineX = annotation.BarCenter + pitch / 2.0;
+                    var textX = lineX + pitch / 4.0;
+                    AddMappedLine(modelSpace, transaction, shape, origin, lineX, annotation.SegmentA, lineX, annotation.FirstPosition, layer);
+                    AddMappedLine(modelSpace, transaction, shape, origin, lineX, annotation.LastPosition, lineX, annotation.SegmentB, layer);
+                    AddMappedTick(modelSpace, transaction, shape, origin, lineX, annotation.FirstPosition, false, layer);
+                    AddMappedTick(modelSpace, transaction, shape, origin, lineX, annotation.LastPosition, false, layer);
+                    AddMappedTick(modelSpace, transaction, shape, origin, lineX, annotation.SegmentB, false, layer);
+                    var firstPoint = MapPoint(shape, origin, textX, (annotation.LastPosition + annotation.SegmentB) / 2.0);
+                    AddText(
+                        modelSpace, transaction, firstPoint.X, firstPoint.Y,
+                        "首" + ReportTables.Format(annotation.LastHole), 13.0, layer, true, TextRotation(shape, Math.PI / 2.0));
+                    var lastPoint = MapPoint(shape, origin, textX, (annotation.SegmentA + annotation.FirstPosition) / 2.0);
+                    AddText(
+                        modelSpace, transaction, lastPoint.X, lastPoint.Y,
+                        "尾" + ReportTables.Format(annotation.FirstHole), 13.0, layer, true, TextRotation(shape, Math.PI / 2.0));
+                }
+            }
+        }
+
+        private static Point3d AlignOutlineInsertion(OutlineLayoutResult layout, Point3d insertionPoint)
+        {
+            var bounds = layout.Plate.Bounds;
+            var shape = layout.Shape;
+            double minX = double.MaxValue, minY = double.MaxValue;
+            foreach (var x in new[] { bounds.X0, bounds.X1 })
+            {
+                foreach (var y in new[] { bounds.Y0, bounds.Y1 })
+                {
+                    minX = Math.Min(minX, x * shape.AxisX.X + y * shape.AxisY.X);
+                    minY = Math.Min(minY, x * shape.AxisX.Y + y * shape.AxisY.Y);
+                }
+            }
+
+            return new Point3d(insertionPoint.X - minX, insertionPoint.Y - minY, 0.0);
+        }
+
+        private static Point3d MapPoint(OutlineShape shape, Point3d origin, double x, double y)
+        {
+            return new Point3d(
+                origin.X + x * shape.AxisX.X + y * shape.AxisY.X,
+                origin.Y + x * shape.AxisX.Y + y * shape.AxisY.Y,
+                0.0);
+        }
+
+        private static void AppendMappedPolyline(
+            BlockTableRecord modelSpace,
+            Transaction transaction,
+            IReadOnlyList<Point2D> points,
+            OutlineShape shape,
+            Point3d origin,
+            string layer)
+        {
+            var polyline = new Polyline();
+            for (var i = 0; i < points.Count; i++)
+            {
+                var point = MapPoint(shape, origin, points[i].X, points[i].Y);
+                polyline.AddVertexAt(i, new Point2d(point.X, point.Y), 0.0, 0.0, 0.0);
+            }
+
+            polyline.Closed = true;
+            polyline.Layer = layer;
+            modelSpace.AppendEntity(polyline);
+            transaction.AddNewlyCreatedDBObject(polyline, true);
+        }
+
+        private static void AddMappedLine(
+            BlockTableRecord modelSpace,
+            Transaction transaction,
+            OutlineShape shape,
+            Point3d origin,
+            double x1,
+            double y1,
+            double x2,
+            double y2,
+            string layer)
+        {
+            var a = MapPoint(shape, origin, x1, y1);
+            var b = MapPoint(shape, origin, x2, y2);
+            AddLine(modelSpace, transaction, a.X, a.Y, b.X, b.Y, layer);
+        }
+
+        private static void AddMappedTick(
+            BlockTableRecord modelSpace,
+            Transaction transaction,
+            OutlineShape shape,
+            Point3d origin,
+            double x,
+            double y,
+            bool horizontalBar,
+            string layer)
+        {
+            const double tick = 4.0;
+            var a = horizontalBar
+                ? MapPoint(shape, origin, x, y - tick)
+                : MapPoint(shape, origin, x - tick, y);
+            var b = horizontalBar
+                ? MapPoint(shape, origin, x, y + tick)
+                : MapPoint(shape, origin, x + tick, y);
+            AddLine(modelSpace, transaction, a.X, a.Y, b.X, b.Y, layer);
+        }
+
+        /// <summary>文字角度：局部角度叠加轮廓旋转角，并保证文字不倒置。</summary>
+        private static double TextRotation(OutlineShape shape, double localRadians)
+        {
+            var angle = Math.Atan2(shape.AxisX.Y, shape.AxisX.X) + localRadians;
+            while (angle > Math.PI)
+            {
+                angle -= 2.0 * Math.PI;
+            }
+
+            while (angle <= -Math.PI)
+            {
+                angle += 2.0 * Math.PI;
+            }
+
+            if (angle > Math.PI / 2.0 + 1e-9)
+            {
+                angle -= Math.PI;
+            }
+            else if (angle <= -Math.PI / 2.0 - 1e-9)
+            {
+                angle += Math.PI;
+            }
+
+            return angle;
         }
     }
 }

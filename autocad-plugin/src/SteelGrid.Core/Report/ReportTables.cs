@@ -160,6 +160,31 @@ namespace SteelGrid.Core.Report
             return items;
         }
 
+        /// <summary>多边形边框料的下料表（按方向 + 长度合并计数）。</summary>
+        public static List<ReportItem> FrameTable(List<RotatedPiece> pieces)
+        {
+            var counts = new Dictionary<string, int>();
+            var order = new List<ReportItem>();
+            foreach (var piece in pieces)
+            {
+                AddFramePiece(counts, order, piece.Direction, piece.Length);
+            }
+
+            var items = new List<ReportItem>();
+            foreach (var item in order)
+            {
+                items.Add(new ReportItem
+                {
+                    Spec = "边框",
+                    Length = item.Length,
+                    Direction = item.Direction,
+                    Count = counts[item.Direction + "|" + Format(item.Length)]
+                });
+            }
+
+            return items;
+        }
+
         public static List<ReportItem> ReportTable(LayoutResult result, string directionFilter)
         {
             var geo = result.Geometry;

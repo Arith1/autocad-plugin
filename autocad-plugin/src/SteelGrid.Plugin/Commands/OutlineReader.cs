@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
+using SteelGrid.Core.Geometry;
 using SteelGrid.Core.Model;
 
 namespace SteelGrid.Plugin.Commands
@@ -33,6 +34,45 @@ namespace SteelGrid.Plugin.Commands
             public double LoY => Math.Min(Start.Y, End.Y);
 
             public double HiY => Math.Max(Start.Y, End.Y);
+        }
+
+        /// <summary>读多段线顶点与凸度，交给 Core 的轮廓解析器判定类型。</summary>
+        public static OutlineParseResult ReadShape(Polyline outline)
+        {
+            if (outline == null)
+            {
+                return OutlineParseResult.Reject("图形为空");
+            }
+
+            var points = new List<Point2D>();
+            var bulges = new List<double>();
+            for (var i = 0; i < outline.NumberOfVertices; i++)
+            {
+                var point = outline.GetPoint2dAt(i);
+                points.Add(new Point2D(point.X, point.Y));
+                bulges.Add(outline.GetBulgeAt(i));
+            }
+
+            return OutlineParser.Parse(points, bulges, outline.Closed);
+        }
+
+        /// <summary>轮廓是否含弧段。</summary>
+        public static bool HasArc(Polyline outline)
+        {
+            if (outline == null)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < outline.NumberOfVertices; i++)
+            {
+                if (Math.Abs(outline.GetBulgeAt(i)) > 1e-9)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         public static List<Notch> ReadNotches(Polyline outline)

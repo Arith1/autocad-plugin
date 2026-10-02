@@ -52,6 +52,28 @@ namespace SteelGrid.Core.Model
             }
         }
 
+        /// <summary>多边形轮廓路径的参数检查（不含洞口尺寸与缺口）。</summary>
+        public static void ValidateForOutline(Spec spec)
+        {
+            if (spec == null)
+            {
+                throw new ArgumentNullException(nameof(spec));
+            }
+
+            if (spec.Shrink < 0.0)
+            {
+                throw new ArgumentException("缩尺不能为负数；不需要缩尺时请设为 0");
+            }
+
+            if (spec.FrameT <= 0.0)
+            {
+                throw new ArgumentException("边框厚度必须大于 0");
+            }
+
+            ValidateBar("纵向", spec.Vertical);
+            ValidateBar("横向", spec.Horizontal);
+        }
+
         private static void ValidateBar(string name, BarSpec bars)
         {
             if (bars == null)
