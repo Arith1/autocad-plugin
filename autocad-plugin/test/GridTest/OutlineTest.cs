@@ -279,6 +279,57 @@ namespace GridTest
                 Console.WriteLine("    " + row.Direction + " 长 " + F(row.Length) + " x" + row.Count);
             }
 
+            // 诊断：条的四角不得落在缺口净空区内（0 = 干净）
+            var insideHole = 0;
+            foreach (var bar in layout.VerticalBars)
+            {
+                for (var s = 0; s < bar.Segments.Count; s++)
+                {
+                    var segment = bar.Segments[s];
+                    var half = bar.Thickness / 2.0;
+                    foreach (var y in new[] { segment.A, segment.B })
+                    {
+                        foreach (var x in new[] { bar.Center - half, bar.Center + half })
+                        {
+                            foreach (var hole in layout.NetHoles)
+                            {
+                                if (hole.Offset(0.05).Contains(x, y))
+                                {
+                                    insideHole++;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            foreach (var bar in layout.HorizontalBars)
+            {
+                for (var s = 0; s < bar.Segments.Count; s++)
+                {
+                    var segment = bar.Segments[s];
+                    var half = bar.Thickness / 2.0;
+                    foreach (var x in new[] { segment.A, segment.B })
+                    {
+                        foreach (var y in new[] { bar.Center - half, bar.Center + half })
+                        {
+                            foreach (var hole in layout.NetHoles)
+                            {
+                                if (hole.Offset(0.05).Contains(x, y))
+                                {
+                                    insideHole++;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (layout.NetHoles.Count > 0)
+            {
+                ok &= Check("条不进入缺口净空区（0 = 干净）", insideHole == 0, insideHole + " 个角点在缺口内");
+            }
+
             var annotations = ReportTables.HoleAnnotations(layout.Bars);
             Console.WriteLine("  首尾孔距标注 " + annotations.Count + " 处");
             for (var i = 0; i < annotations.Count && i < 4; i++)

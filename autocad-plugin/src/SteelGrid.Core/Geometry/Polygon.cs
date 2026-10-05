@@ -381,6 +381,59 @@ namespace SteelGrid.Core.Geometry
             return new Polygon(result);
         }
 
+        /// <summary>
+        /// 直接向外偏移：每条边沿**外**法线平移 distance，相邻偏移线求交。
+        /// 用于把缺口按比例外扩（缺口净空区），斜边缺口也适用。
+        /// </summary>
+        public Polygon OffsetOutward(double distance)
+        {
+            if (_vertices.Count < 3 || distance <= 0.0)
+            {
+                return new Polygon(_vertices);
+            }
+
+            var count = _vertices.Count;
+            var result = new List<Point2D>();
+            for (var i = 0; i < count; i++)
+            {
+                var previous = (i + count - 1) % count;
+                var p1 = _vertices[previous];
+                var p2 = _vertices[i];
+                var q1 = _vertices[i];
+                var q2 = _vertices[(i + 1) % count];
+
+                var e1x = p2.X - p1.X;
+                var e1y = p2.Y - p1.Y;
+                var e2x = q2.X - q1.X;
+                var e2y = q2.Y - q1.Y;
+                var len1 = Math.Sqrt(e1x * e1x + e1y * e1y);
+                var len2 = Math.Sqrt(e2x * e2x + e2y * e2y);
+                if (len1 <= Tol || len2 <= Tol)
+                {
+                    result.Add(p2);
+                    continue;
+                }
+
+                // 逆时针多边形：左侧是内侧，向外偏移取右侧
+                var a1x = p1.X + e1y / len1 * distance;
+                var a1y = p1.Y - e1x / len1 * distance;
+                var a2x = q1.X + e2y / len2 * distance;
+                var a2y = q1.Y - e2x / len2 * distance;
+
+                var denominator = e1x * e2y - e1y * e2x;
+                if (Math.Abs(denominator) <= Tol)
+                {
+                    result.Add(new Point2D(a2x, a2y));
+                    continue;
+                }
+
+                var t = ((a2x - a1x) * e2y - (a2y - a1y) * e2x) / denominator;
+                result.Add(new Point2D(a1x + e1x * t, a1y + e1y * t));
+            }
+
+            return new Polygon(result);
+        }
+
         /// <summary>点集凸包（Andrew 单调链），返回逆时针顶点。</summary>
         public static Polygon ConvexHull(IList<Point2D> points)
         {

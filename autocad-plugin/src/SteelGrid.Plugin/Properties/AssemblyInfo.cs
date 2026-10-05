@@ -8,6 +8,6 @@ using SteelGrid.Plugin.Commands;
 [assembly: AssemblyProduct("SteelGrid.Plugin")]
 [assembly: ComVisible(false)]
 [assembly: Guid("e5f5a8d6-6c0b-4b6d-8d37-6c0a57a5a002")]
-[assembly: AssemblyVersion("2.0.0.0")]
-[assembly: AssemblyFileVersion("2.0.0.0")]
+[assembly: AssemblyVersion("2.1.0.0")]
+[assembly: AssemblyFileVersion("2.1.0.0")]
 [assembly: CommandClass(typeof(GridPluginCommands))]

@@ -37,9 +37,10 @@ namespace SteelGrid.Core.Layout
             var netHoles = new List<Polygon>();
             foreach (var notch in shape.NotchPolygons)
             {
-                // 偏移两次：板件缺口按 缩尺 偏移；排条区缺口按 缩尺 + 边框厚 偏移。
-                plateNotches.Add(WidenNotch(notch, shape.Polygon, spec.Shrink));
-                netHoles.Add(WidenNotch(notch, shape.Polygon, spec.Shrink + spec.FrameT));
+                // 缺口按"每个壁各自沿法线向外偏移"扩展（斜口缺口也适用）：
+                // 板件缺口偏移 缩尺；排条区缺口偏移 缩尺 + 边框厚。
+                plateNotches.Add(notch.OffsetOutward(spec.Shrink));
+                netHoles.Add(notch.OffsetOutward(spec.Shrink + spec.FrameT));
             }
 
             // 中心距布置范围按"原始轮廓包围盒 缩尺 + 边框厚"（与矩形路径一致），

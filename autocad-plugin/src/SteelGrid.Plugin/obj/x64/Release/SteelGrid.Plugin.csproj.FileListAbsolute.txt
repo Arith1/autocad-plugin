@@ -131,3 +131,7 @@ F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin
 F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Release\v2.0\SteelGrid.Plugin.pdb
 F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Release\v2.0\SteelGrid.Core.dll
 F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Release\v2.0\SteelGrid.Core.pdb
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Release\v2.1\SteelGrid.Plugin.dll
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Release\v2.1\SteelGrid.Plugin.pdb
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Release\v2.1\SteelGrid.Core.dll
+F:\PracticeProject\钢格板自动排条\autocad-plugin\src\SteelGrid.Plugin\bin\Release\v2.1\SteelGrid.Core.pdb

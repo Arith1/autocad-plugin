@@ -28,7 +28,7 @@ namespace SteelGrid.Plugin.Commands
         public static void ShowInfo()
         {
             var editor = GetEditor();
-            editor.WriteMessage("\n钢格板自动排条插件 正式版 2.0：矩形（凹口/缺角/凸出）走原逻辑；梯形/平行四边形按多边形净空排条，斜边处按短边切平下料；弧形图形提示跳过。");
+            editor.WriteMessage("\n钢格板自动排条插件 正式版 2.1：矩形（凹口/缺角/凸出）走原逻辑；梯形/平行四边形按多边形净空排条，斜边处按短边切平下料；弧形图形提示跳过。");
         }
 
         [CommandMethod("GPGRIDSET")]
