@@ -28,7 +28,7 @@ namespace SteelGrid.Plugin.Commands
         public static void ShowInfo()
         {
             var editor = GetEditor();
-            editor.WriteMessage("\n钢格板自动排条插件 正式版 2.1：矩形（凹口/缺角/凸出）走原逻辑；梯形/平行四边形按多边形净空排条，斜边处按短边切平下料；弧形图形提示跳过。");
+            editor.WriteMessage("\n钢格板自动排条插件 正式版 2.2：矩形（凹口/缺角/凸出）走原逻辑；梯形/平行四边形按多边形净空排条，斜边处按短边切平下料；弧形图形提示跳过。");
         }
 
         [CommandMethod("GPGRIDSET")]
@@ -75,11 +75,17 @@ namespace SteelGrid.Plugin.Commands
             using (var transaction = document.Database.TransactionManager.StartTransaction())
             {
                 var pending = new List<Tuple<ObjectId, Polyline>>();
+                var invalidSkipped = 0;
                 foreach (var id in selectedIds)
                 {
                     var outline = transaction.GetObject(id, OpenMode.ForRead) as Polyline;
                     if (outline == null || !outline.Closed || !outline.Bounds.HasValue)
                     {
+                        invalidSkipped++;
+                        var reason = outline == null
+                            ? "不是轻量多段线"
+                            : !outline.Closed ? "多段线未闭合" : "轮廓没有有效边界";
+                        editor.WriteMessage("\n图形 {0} 跳过：{1}", id.Handle, reason);
                         continue;
                     }
 
@@ -118,6 +124,7 @@ namespace SteelGrid.Plugin.Commands
 
                 var results = new List<LayoutItem>();
                 var skipped = 0;
+                var failed = 0;
                 foreach (var item in pending)
                 {
                     var id = item.Item1;
@@ -171,15 +178,19 @@ namespace SteelGrid.Plugin.Commands
                     }
                     catch (System.Exception ex)
                     {
+                        failed++;
                         editor.WriteMessage("\n图形 {0} 识别或排条失败：{1}", id.Handle, ex.Message);
                     }
                 }
 
                 if (results.Count == 0)
                 {
-                    editor.WriteMessage(skipped > 0
-                        ? $"\n选区内没有可用的闭合多段线（跳过 {skipped} 个：弧形暂不支持）。"
-                        : "\n选区内没有可用的闭合多段线。");
+                    editor.WriteMessage(
+                        "\n选区内没有成功排条的图形；跳过 {0} 个（弧形 {1}，无效轮廓 {2}），处理失败 {3} 个。",
+                        skipped + invalidSkipped,
+                        skipped,
+                        invalidSkipped,
+                        failed);
                     return;
                 }
 
@@ -260,9 +271,15 @@ namespace SteelGrid.Plugin.Commands
                     }
 
                     transaction.Commit();
-                    editor.WriteMessage(skipped > 0
-                        ? $"\n排条完成：共 {results.Count} 个图形，边框料 {totalFrames} 个矩形，段数 {totalSegments}；跳过 {skipped} 个（弧形暂不支持）"
-                        : $"\n排条完成：共 {results.Count} 个图形，边框料 {totalFrames} 个矩形，段数 {totalSegments}");
+                    editor.WriteMessage(
+                        "\n排条完成：共 {0} 个图形，边框料 {1} 个矩形，段数 {2}；跳过 {3} 个（弧形 {4}，无效轮廓 {5}），处理失败 {6} 个",
+                        results.Count,
+                        totalFrames,
+                        totalSegments,
+                        skipped + invalidSkipped,
+                        skipped,
+                        invalidSkipped,
+                        failed);
                 }
                 catch (System.Exception ex)
                 {

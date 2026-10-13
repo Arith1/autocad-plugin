@@ -13,7 +13,12 @@ test/
 └─ GridTest/                # 离线自检：DXF 解析 + 排条 + 边框料
 docs/                       # 设计文档；docs/svg/ 为 SVG 检查图
 package/
-└─ PackageContents.xml
+├─ PackageContents.xml             # Bundle 清单源文件
+└─ SteelGrid.bundle/               # Release 构建后生成可部署 Bundle
+   ├─ PackageContents.xml
+   └─ Contents/
+      ├─ SteelGrid.Plugin.dll
+      └─ SteelGrid.Core.dll
 ```
 
 设计文档：
@@ -78,6 +83,13 @@ GridTest.exe <dxf>               # 矩形（凹口 / 缺角 / 凸出）排条回
 绿 = 原始轮廓、红 = 外框线、灰 = 内框线、蓝 / 橙 = 边框料，料中间标下料长度。
 
 ## 更新记录
+
+### 正式版 2.2 - 2026-10-13
+
+- 注册 AutoCAD 扩展应用入口，NETLOAD 后会执行初始化提示；加载提示与命令信息统一为 2.2。
+- Release 构建后自动生成 `package/SteelGrid.bundle/`，包含清单以及插件和核心 DLL，可作为 AutoCAD Bundle 部署。
+- `GPGRID` 会逐个报告未闭合或无效轮廓，并在完成摘要里统计弧形跳过、无效轮廓和处理失败数量。
+- Release 产物输出到 `bin/Release/v2.2/`。
 
 ### 正式版 2.1 - 2026-10-05
 

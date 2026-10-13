@@ -21,7 +21,7 @@
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
-    <PluginVersion>2.1</PluginVersion>
+    <PluginVersion>2.2</PluginVersion>
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>bin\Release\v$(PluginVersion)\</OutputPath>
@@ -65,5 +65,16 @@
   </ItemGroup>
 
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+
+  <Target Name="StageAutoCADBundle" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+    <PropertyGroup>
+      <BundleRoot>$(MSBuildProjectDirectory)\..\..\package\SteelGrid.bundle</BundleRoot>
+      <BundleContents>$(BundleRoot)\Contents</BundleContents>
+    </PropertyGroup>
+    <MakeDir Directories="$(BundleContents)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(BundleContents)" />
+    <Copy SourceFiles="$(TargetDir)SteelGrid.Core.dll" DestinationFolder="$(BundleContents)" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\..\package\PackageContents.xml" DestinationFolder="$(BundleRoot)" />
+  </Target>
 
 </Project>
