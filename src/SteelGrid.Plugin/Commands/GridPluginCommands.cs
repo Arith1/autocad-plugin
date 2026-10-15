@@ -28,7 +28,7 @@ namespace SteelGrid.Plugin.Commands
         public static void ShowInfo()
         {
             var editor = GetEditor();
-            editor.WriteMessage("\n钢格板自动排条插件 3.01：GPGRID 正常排条；GPGRIDNOBORDER 直接按所选轮廓排条，不缩尺、不生成边框料。");
+            editor.WriteMessage("\n钢格板自动排条插件 3.03：GPGRID 正常排条；GPGRIDNOBORDER 将闭合轮廓直接作为排条区域，横条水平、纵条垂直，不缩尺、不生成边框料。");
         }
 
         [CommandMethod("GPGRIDSET")]
@@ -142,6 +142,18 @@ namespace SteelGrid.Plugin.Commands
                     var outline = item.Item2;
                     try
                     {
+                        if (useSelectedOutlineAsNet)
+                        {
+                            var directLayout = BuildDirectOutlineLayout(outline);
+                            editor.WriteMessage(
+                                "\n直接按闭合轮廓排条：局部 {0:0.##} x {1:0.##}，段数 {2}",
+                                directLayout.Plate.Bounds.W,
+                                directLayout.Plate.Bounds.H,
+                                directLayout.SegmentCount);
+                            results.Add(new LayoutItem(directLayout));
+                            continue;
+                        }
+
                         var parsed = OutlineReader.ReadShape(outline);
                         if (!parsed.Supported)
                         {
@@ -392,6 +404,31 @@ namespace SteelGrid.Plugin.Commands
             }
 
             return spec;
+        }
+
+        /// <summary>
+        /// 直接排条模式不做轮廓分类，也不读取边缘缺口；把闭合多段线作为唯一排条区域。
+        /// 核心引擎会将弧段离散后直接裁切条带。
+        /// </summary>
+        private static OutlineLayoutResult BuildDirectOutlineLayout(Polyline outline)
+        {
+            var bounds = outline.Bounds.Value;
+            var width = bounds.MaxPoint.X - bounds.MinPoint.X;
+            var height = bounds.MaxPoint.Y - bounds.MinPoint.Y;
+            var spec = _savedSettings.ToSpec(width, height, new Notch[0]);
+            spec.Shrink = 0.0;
+            spec.FrameT = 0.0;
+
+            var vertices = new List<Point2D>();
+            var bulges = new List<double>();
+            for (var i = 0; i < outline.NumberOfVertices; i++)
+            {
+                var point = outline.GetPoint2dAt(i);
+                vertices.Add(new Point2D(point.X, point.Y));
+                bulges.Add(outline.GetBulgeAt(i));
+            }
+
+            return DirectOutlineLayoutEngine.Layout(vertices, bulges, outline.Closed, spec);
         }
 
         private static Point3d GetOrigin(Polyline outline)

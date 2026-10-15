@@ -42,6 +42,7 @@
     <Compile Include="Geometry\OutlineGeometry.cs" />
     <Compile Include="Geometry\OutlineShape.cs" />
     <Compile Include="Geometry\CircularArc.cs" />
+    <Compile Include="Geometry\DirectOutlineLayoutEngine.cs" />
     <Compile Include="Geometry\CurvedFramePiece.cs" />
     <Compile Include="Geometry\PlateGeometry.cs" />
     <Compile Include="Geometry\PolygonFrameSplitter.cs" />
