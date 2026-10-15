@@ -21,7 +21,7 @@
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
-    <PluginVersion>2.2</PluginVersion>
+    <PluginVersion>3.01</PluginVersion>
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>bin\Release\v$(PluginVersion)\</OutputPath>
@@ -68,7 +68,7 @@
 
   <Target Name="StageAutoCADBundle" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
     <PropertyGroup>
-      <BundleRoot>$(MSBuildProjectDirectory)\..\..\package\SteelGrid.bundle</BundleRoot>
+      <BundleRoot>$(MSBuildProjectDirectory)\..\..\package\SteelGrid-v$(PluginVersion).bundle</BundleRoot>
       <BundleContents>$(BundleRoot)\Contents</BundleContents>
     </PropertyGroup>
     <MakeDir Directories="$(BundleContents)" />

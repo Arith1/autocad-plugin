@@ -48,7 +48,7 @@ namespace SteelGrid.Core.Geometry
         /// </summary>
         public static OutlineParseResult Parse(IList<Point2D> vertices, IList<double> bulges, bool closed)
         {
-            if (vertices == null || vertices.Count < 3)
+            if (vertices == null || vertices.Count < 2)
             {
                 return OutlineParseResult.Reject("轮廓顶点不足 3 个");
             }
@@ -60,12 +60,24 @@ namespace SteelGrid.Core.Geometry
 
             if (bulges != null)
             {
-                foreach (var bulge in bulges)
+                if (bulges.Count != vertices.Count)
                 {
+                    return OutlineParseResult.Reject("圆弧凸度数量与顶点数不一致");
+                }
+
+                var arcIndexes = new List<int>();
+                for (var i = 0; i < bulges.Count; i++)
+                {
+                    var bulge = bulges[i];
                     if (Math.Abs(bulge) > 1e-9)
                     {
-                        return OutlineParseResult.Reject("弧形暂不支持（检测到弧段）");
+                        arcIndexes.Add(i);
                     }
+                }
+
+                if (arcIndexes.Count > 0)
+                {
+                    return ParseCurvedOutline(vertices, bulges, closed, arcIndexes);
                 }
             }
 
@@ -119,6 +131,101 @@ namespace SteelGrid.Core.Geometry
             }
 
             return OutlineParseResult.Ok(Build(points, originalPoints, notchRings));
+        }
+
+        private static OutlineParseResult ParseCurvedOutline(
+            IList<Point2D> vertices,
+            IList<double> bulges,
+            bool closed,
+            IList<int> arcIndexes)
+        {
+            // 只把弧离散为排条裁剪边界；每条原始弧仍独立保存为一根整弧料。
+            const double chordTolerance = 0.05;
+            var sampled = new List<Point2D>();
+            var arcs = new Dictionary<int, CircularArc>();
+            for (var i = 0; i < vertices.Count; i++)
+            {
+                sampled.Add(vertices[i]);
+                var isArc = false;
+                foreach (var arcIndex in arcIndexes)
+                {
+                    if (arcIndex == i)
+                    {
+                        isArc = true;
+                        break;
+                    }
+                }
+
+                if (!isArc)
+                {
+                    continue;
+                }
+
+                CircularArc arc;
+                try
+                {
+                    arc = CircularArc.FromBulge(vertices[i], vertices[(i + 1) % vertices.Count], bulges[i]);
+                }
+                catch (Exception ex)
+                {
+                    return OutlineParseResult.Reject("圆弧参数无效：" + ex.Message);
+                }
+
+                arcs.Add(i, arc);
+                var arcPoints = arc.Tessellate(chordTolerance);
+                for (var p = 1; p < arcPoints.Count - 1; p++)
+                {
+                    sampled.Add(arcPoints[p]);
+                }
+            }
+
+            var hull = Polygon.ConvexHull(sampled);
+            if (hull.Vertices.Count < 3 || hull.Area <= Tol)
+            {
+                return OutlineParseResult.Reject("圆弧轮廓退化，无法排条");
+            }
+
+            // 保留真实凹轮廓供偏移与条带求交；凸包只用于稳定包围盒/局部基准。
+            var result = OutlineParseResult.Ok(Build(
+                new List<Point2D>(hull.Vertices),
+                new List<Point2D>(sampled),
+                new List<List<Point2D>>()));
+
+            var winding = Math.Sign(SignedArea(sampled));
+            foreach (var arcIndex in arcIndexes)
+            {
+                var arc = arcs[arcIndex];
+                var outwardRadiusSign = -Math.Sign(arc.SweepAngle) * winding;
+                var sampledStart = FindSamplePoint(result.Shape.WorldVertices, arc.Start);
+                var sampledEnd = FindSamplePoint(result.Shape.WorldVertices, arc.End);
+                if (sampledStart < 0 || sampledEnd < 0 || sampledStart == sampledEnd)
+                {
+                    return OutlineParseResult.Reject("圆弧端点在轮廓清洗后丢失，无法确定整根弧形边框");
+                }
+
+                result.Shape.SetCurvedNotchArc(
+                    arc,
+                    vertices[(arcIndex + vertices.Count - 1) % vertices.Count],
+                    vertices[(arcIndex + 2) % vertices.Count],
+                    winding,
+                    outwardRadiusSign == 0 ? 1 : outwardRadiusSign,
+                    sampledStart,
+                    sampledEnd);
+            }
+            return result;
+        }
+
+        private static int FindSamplePoint(IReadOnlyList<Point2D> points, Point2D target)
+        {
+            for (var i = 0; i < points.Count; i++)
+            {
+                if (Same(points[i], target))
+                {
+                    return i;
+                }
+            }
+
+            return -1;
         }
 
         /// <summary>

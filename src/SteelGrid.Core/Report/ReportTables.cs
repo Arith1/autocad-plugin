@@ -185,6 +185,37 @@ namespace SteelGrid.Core.Report
             return items;
         }
 
+        /// <summary>普通直料加一根折弯弧料的边框下料表。</summary>
+        public static List<ReportItem> FrameTable(List<RotatedPiece> pieces, CurvedFramePiece curvedPiece)
+        {
+            return FrameTable(pieces, curvedPiece == null
+                ? new List<CurvedFramePiece>()
+                : new List<CurvedFramePiece> { curvedPiece });
+        }
+
+        public static List<ReportItem> FrameTable(List<RotatedPiece> pieces, IReadOnlyList<CurvedFramePiece> curvedPieces)
+        {
+            var items = FrameTable(pieces);
+            if (curvedPieces != null)
+            {
+                foreach (var curvedPiece in curvedPieces)
+                {
+                    if (curvedPiece != null && curvedPiece.Length > 1e-9)
+                    {
+                        items.Add(new ReportItem
+                        {
+                            Spec = "弧形边框",
+                            Direction = "弧形",
+                            Length = Math.Round(curvedPiece.Length, 6),
+                            Count = 1
+                        });
+                    }
+                }
+            }
+
+            return items;
+        }
+
         public static List<ReportItem> ReportTable(LayoutResult result, string directionFilter)
         {
             var geo = result.Geometry;

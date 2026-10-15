@@ -28,9 +28,9 @@ namespace SteelGrid.Core.Model
                 throw new ArgumentException("缩尺后的板件尺寸必须大于 0");
             }
 
-            if (spec.FrameT <= 0.0)
+            if (spec.FrameT < 0.0)
             {
-                throw new ArgumentException("边框厚度必须大于 0");
+                throw new ArgumentException("边框厚度不能为负数");
             }
 
             ValidateBar("纵向", spec.Vertical);
@@ -65,9 +65,9 @@ namespace SteelGrid.Core.Model
                 throw new ArgumentException("缩尺不能为负数；不需要缩尺时请设为 0");
             }
 
-            if (spec.FrameT <= 0.0)
+            if (spec.FrameT < 0.0)
             {
-                throw new ArgumentException("边框厚度必须大于 0");
+                throw new ArgumentException("边框厚度不能为负数");
             }
 
             ValidateBar("纵向", spec.Vertical);

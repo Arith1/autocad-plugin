@@ -266,6 +266,155 @@ namespace SteelGrid.Core.Geometry
         }
 
         /// <summary>
+        /// 凹多边形与整宽条带求交，可返回多个互不相连的沿向区段。
+        /// 每段取整个条带宽度上都落在多边形内的公共区间，弧形轮廓的弦只用于此处裁剪。
+        /// </summary>
+        public List<BandCut> ClipBandIntervals(double center, double halfWidth, BandAxis axis)
+        {
+            var result = new List<BandCut>();
+            if (_vertices.Count < 3 || halfWidth <= 0.0)
+            {
+                return result;
+            }
+
+            var lo = center - halfWidth;
+            var hi = center + halfWidth;
+            var critical = new List<double> { lo, hi };
+            foreach (var vertex in _vertices)
+            {
+                var value = Perp(vertex, axis);
+                if (value > lo + Tol && value < hi - Tol)
+                {
+                    critical.Add(value);
+                }
+            }
+
+            critical.Sort();
+            var unique = new List<double>();
+            foreach (var value in critical)
+            {
+                if (unique.Count == 0 || value - unique[unique.Count - 1] > Tol)
+                {
+                    unique.Add(value);
+                }
+            }
+
+            var samples = new List<double>();
+            var edgeEps = Math.Min(1e-5, (hi - lo) * 1e-5);
+            samples.Add(lo + edgeEps);
+            samples.Add(hi - edgeEps);
+            for (var i = 0; i < unique.Count - 1; i++)
+            {
+                var a = unique[i];
+                var b = unique[i + 1];
+                if (b - a <= Tol)
+                {
+                    continue;
+                }
+
+                samples.Add((a + b) / 2.0);
+                var delta = Math.Min(edgeEps, (b - a) * 1e-5);
+                if (a > lo + Tol) samples.Add(a + delta);
+                if (b < hi - Tol) samples.Add(b - delta);
+            }
+
+            samples.Sort();
+            var common = new List<Tuple<double, double>>();
+            var first = true;
+            foreach (var sample in samples)
+            {
+                var current = IntervalsAt(sample, axis);
+                if (first)
+                {
+                    common = current;
+                    first = false;
+                    continue;
+                }
+
+                var intersection = new List<Tuple<double, double>>();
+                foreach (var existing in common)
+                {
+                    foreach (var interval in current)
+                    {
+                        var a = Math.Max(existing.Item1, interval.Item1);
+                        var b = Math.Min(existing.Item2, interval.Item2);
+                        if (b - a > Tol)
+                        {
+                            intersection.Add(Tuple.Create(a, b));
+                        }
+                    }
+                }
+
+                common = MergeIntervals(intersection);
+                if (common.Count == 0)
+                {
+                    return result;
+                }
+            }
+
+            var rectLo = lo;
+            var rectHi = hi;
+            foreach (var interval in common)
+            {
+                var rect = axis == BandAxis.Vertical
+                    ? new Rect(rectLo, interval.Item1, rectHi, interval.Item2)
+                    : new Rect(interval.Item1, rectLo, interval.Item2, rectHi);
+                result.Add(new BandCut(interval.Item1, interval.Item2, rect, interval.Item1, interval.Item2));
+            }
+
+            return result;
+        }
+
+        private List<Tuple<double, double>> IntervalsAt(double perp, BandAxis axis)
+        {
+            var crossings = new List<double>();
+            for (var i = 0; i < _vertices.Count; i++)
+            {
+                var p = _vertices[i];
+                var q = _vertices[(i + 1) % _vertices.Count];
+                var pp = Perp(p, axis);
+                var qp = Perp(q, axis);
+                if ((pp <= perp && qp > perp) || (qp <= perp && pp > perp))
+                {
+                    var t = (perp - pp) / (qp - pp);
+                    crossings.Add(Along(p, axis) + t * (Along(q, axis) - Along(p, axis)));
+                }
+            }
+
+            crossings.Sort();
+            var result = new List<Tuple<double, double>>();
+            for (var i = 0; i + 1 < crossings.Count; i += 2)
+            {
+                if (crossings[i + 1] - crossings[i] > Tol)
+                {
+                    result.Add(Tuple.Create(crossings[i], crossings[i + 1]));
+                }
+            }
+
+            return result;
+        }
+
+        private static List<Tuple<double, double>> MergeIntervals(List<Tuple<double, double>> intervals)
+        {
+            intervals.Sort((a, b) => a.Item1.CompareTo(b.Item1));
+            var result = new List<Tuple<double, double>>();
+            foreach (var interval in intervals)
+            {
+                if (result.Count == 0 || interval.Item1 > result[result.Count - 1].Item2 + Tol)
+                {
+                    result.Add(interval);
+                }
+                else
+                {
+                    var previous = result[result.Count - 1];
+                    result[result.Count - 1] = Tuple.Create(previous.Item1, Math.Max(previous.Item2, interval.Item2));
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
         /// 条带与多边形的**并集区间**：只要条带宽度方向和多边形有任何重叠，
         /// 就返回重叠的沿向范围（用于从排条区里挖掉缺口；整宽判定会漏掉只压一半的条带）。
         /// </summary>

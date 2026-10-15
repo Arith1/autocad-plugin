@@ -28,7 +28,7 @@ namespace SteelGrid.Plugin.Commands
         public static void ShowInfo()
         {
             var editor = GetEditor();
-            editor.WriteMessage("\n钢格板自动排条插件 正式版 2.2：矩形（凹口/缺角/凸出）走原逻辑；梯形/平行四边形按多边形净空排条，斜边处按短边切平下料；弧形图形提示跳过。");
+            editor.WriteMessage("\n钢格板自动排条插件 3.01：GPGRID 正常排条；GPGRIDNOBORDER 直接按所选轮廓排条，不缩尺、不生成边框料。");
         }
 
         [CommandMethod("GPGRIDSET")]
@@ -57,6 +57,17 @@ namespace SteelGrid.Plugin.Commands
 
         [CommandMethod("GPGRID")]
         public static void RunGridLayout()
+        {
+            RunGridLayout(false);
+        }
+
+        [CommandMethod("GPGRIDNOBORDER")]
+        public static void RunGridLayoutWithoutBorder()
+        {
+            RunGridLayout(true);
+        }
+
+        private static void RunGridLayout(bool useSelectedOutlineAsNet)
         {
             var document = Application.DocumentManager.MdiActiveDocument;
             if (document == null)
@@ -123,7 +134,7 @@ namespace SteelGrid.Plugin.Commands
                 });
 
                 var results = new List<LayoutItem>();
-                var skipped = 0;
+                var arcSkipped = 0;
                 var failed = 0;
                 foreach (var item in pending)
                 {
@@ -131,19 +142,28 @@ namespace SteelGrid.Plugin.Commands
                     var outline = item.Item2;
                     try
                     {
-                        if (OutlineReader.HasArc(outline))
+                        var parsed = OutlineReader.ReadShape(outline);
+                        if (!parsed.Supported)
                         {
-                            skipped++;
-                            editor.WriteMessage("\n图形 {0} 跳过：弧形暂不支持，不参与排条", id.Handle);
+                            if (OutlineReader.HasArc(outline))
+                            {
+                                arcSkipped++;
+                                editor.WriteMessage("\n图形 {0} 跳过：弧形暂不支持（{1}）", id.Handle, parsed.Message);
+                            }
+                            else
+                            {
+                                invalidSkipped++;
+                                editor.WriteMessage("\n图形 {0} 跳过：无效轮廓（{1}）", id.Handle, parsed.Message);
+                            }
+
                             continue;
                         }
 
-                        var parsed = OutlineReader.ReadShape(outline);
                         if (parsed.Supported
-                            && parsed.Shape.Kind != OutlineKind.Rectangle
-                            && !IsAxisAlignedOutline(outline))
+                            && (parsed.Shape.CurvedNotchArc != null
+                                || (parsed.Shape.Kind != OutlineKind.Rectangle && !IsAxisAlignedOutline(outline))))
                         {
-                            var outlineSpec = BuildSpec(outline);
+                            var outlineSpec = BuildSpec(outline, useSelectedOutlineAsNet);
                             editor.WriteMessage(
                                 "\n识别：{0}轮廓，局部 {1:0.##} x {2:0.##}，旋转 {3:0.##}°，受力 {4}",
                                 parsed.Shape.Kind == OutlineKind.Trapezoid ? "梯形" : "平行四边形",
@@ -155,7 +175,7 @@ namespace SteelGrid.Plugin.Commands
                             continue;
                         }
 
-                        var spec = BuildSpec(outline);
+                        var spec = BuildSpec(outline, useSelectedOutlineAsNet);
                         editor.WriteMessage(
                             "\n识别：板件 {0:0.##} x {1:0.##}，缺口 {2} 个，受力 {3}",
                             spec.PlateW,
@@ -186,9 +206,10 @@ namespace SteelGrid.Plugin.Commands
                 if (results.Count == 0)
                 {
                     editor.WriteMessage(
-                        "\n选区内没有成功排条的图形；跳过 {0} 个（弧形 {1}，无效轮廓 {2}），处理失败 {3} 个。",
-                        skipped + invalidSkipped,
-                        skipped,
+                        "\n排条结束：选中 {0} 个，成功 0 个，跳过 {1} 个（弧形 {2}，无效轮廓 {3}），处理失败 {4} 个。",
+                        selectedIds.Length,
+                        arcSkipped + invalidSkipped,
+                        arcSkipped,
                         invalidSkipped,
                         failed);
                     return;
@@ -220,7 +241,8 @@ namespace SteelGrid.Plugin.Commands
                         foreach (var result in results)
                         {
                             var insertion = new Point3d(columnX, cursorY, 0.0);
-                            var extents = DrawItem(document.Database, transaction, result, insertion);
+                            var extents = DrawItem(
+                                document.Database, transaction, result, insertion, useSelectedOutlineAsNet);
                             totalFrames += extents.FrameCount;
                             totalSegments += result.SegmentCount;
                             columnMaxWidth = Math.Max(columnMaxWidth, extents.Width);
@@ -250,7 +272,8 @@ namespace SteelGrid.Plugin.Commands
                         foreach (var result in results)
                         {
                             var insertion = new Point3d(cursorX, rowY, 0.0);
-                            var extents = DrawItem(document.Database, transaction, result, insertion);
+                            var extents = DrawItem(
+                                document.Database, transaction, result, insertion, useSelectedOutlineAsNet);
                             totalFrames += extents.FrameCount;
                             totalSegments += result.SegmentCount;
                             rowMaxHeight = Math.Max(rowMaxHeight, extents.Height);
@@ -271,15 +294,31 @@ namespace SteelGrid.Plugin.Commands
                     }
 
                     transaction.Commit();
-                    editor.WriteMessage(
-                        "\n排条完成：共 {0} 个图形，边框料 {1} 个矩形，段数 {2}；跳过 {3} 个（弧形 {4}，无效轮廓 {5}），处理失败 {6} 个",
-                        results.Count,
-                        totalFrames,
-                        totalSegments,
-                        skipped + invalidSkipped,
-                        skipped,
-                        invalidSkipped,
-                        failed);
+                    if (useSelectedOutlineAsNet)
+                    {
+                        editor.WriteMessage(
+                            "\n直接排条完成：选中 {0} 个，成功 {1} 个，段数 {2}；跳过 {3} 个（弧形 {4}，无效轮廓 {5}），处理失败 {6} 个",
+                            selectedIds.Length,
+                            results.Count,
+                            totalSegments,
+                            arcSkipped + invalidSkipped,
+                            arcSkipped,
+                            invalidSkipped,
+                            failed);
+                    }
+                    else
+                    {
+                        editor.WriteMessage(
+                            "\n排条完成：选中 {0} 个，成功 {1} 个，边框料 {2} 件，段数 {3}；跳过 {4} 个（弧形 {5}，无效轮廓 {6}），处理失败 {7} 个",
+                            selectedIds.Length,
+                            results.Count,
+                            totalFrames,
+                            totalSegments,
+                            arcSkipped + invalidSkipped,
+                            arcSkipped,
+                            invalidSkipped,
+                            failed);
+                    }
                 }
                 catch (System.Exception ex)
                 {
@@ -339,13 +378,18 @@ namespace SteelGrid.Plugin.Commands
             return true;
         }
 
-        private static Spec BuildSpec(Polyline outline)
+        private static Spec BuildSpec(Polyline outline, bool useSelectedOutlineAsNet = false)
         {
             var bounds = outline.Bounds.Value;
             var width = bounds.MaxPoint.X - bounds.MinPoint.X;
             var height = bounds.MaxPoint.Y - bounds.MinPoint.Y;
             var notches = OutlineReader.ReadNotches(outline);
             var spec = _savedSettings.ToSpec(width, height, notches.ToArray());
+            if (useSelectedOutlineAsNet)
+            {
+                spec.Shrink = 0.0;
+                spec.FrameT = 0.0;
+            }
 
             return spec;
         }
@@ -360,7 +404,8 @@ namespace SteelGrid.Plugin.Commands
             Database database,
             Transaction transaction,
             LayoutResult result,
-            Point3d insertionPoint)
+            Point3d insertionPoint,
+            bool useSelectedOutlineAsNet)
         {
             EnsureLayers(database, transaction);
 
@@ -369,46 +414,53 @@ namespace SteelGrid.Plugin.Commands
             var plateHeight = result.Geometry.Plate.H;
 
             // 边框按受力方向拆成独立边框料，能看出哪条边包住哪条边。
-            var framePieces = FrameSplitter.GetPieces(result.Geometry);
-            var frameCount = DrawFramePieces(
-                modelSpace,
-                transaction,
-                framePieces,
-                insertionPoint,
-                plateHeight);
+            var framePieces = useSelectedOutlineAsNet
+                ? new List<FramePiece>()
+                : FrameSplitter.GetPieces(result.Geometry);
+            var frameCount = useSelectedOutlineAsNet
+                ? 0
+                : DrawFramePieces(modelSpace, transaction, framePieces, insertionPoint, plateHeight);
 
-            var plateOutline = CreateOutlinePolyline(
-                GeometryOutlines.PlateOutline(result.Geometry),
-                insertionPoint,
-                plateHeight,
-                "外轮廓");
-            modelSpace.AppendEntity(plateOutline);
-            transaction.AddNewlyCreatedDBObject(plateOutline, true);
+            if (!useSelectedOutlineAsNet)
+            {
+                var plateOutline = CreateOutlinePolyline(
+                    GeometryOutlines.PlateOutline(result.Geometry),
+                    insertionPoint,
+                    plateHeight,
+                    "外轮廓");
+                modelSpace.AppendEntity(plateOutline);
+                transaction.AddNewlyCreatedDBObject(plateOutline, true);
 
-            var netOutline = CreateOutlinePolyline(
-                GeometryOutlines.NetOutline(result.Geometry),
-                insertionPoint,
-                plateHeight,
-                "内边框");
-            modelSpace.AppendEntity(netOutline);
-            transaction.AddNewlyCreatedDBObject(netOutline, true);
+                var netOutline = CreateOutlinePolyline(
+                    GeometryOutlines.NetOutline(result.Geometry),
+                    insertionPoint,
+                    plateHeight,
+                    "内边框");
+                modelSpace.AppendEntity(netOutline);
+                transaction.AddNewlyCreatedDBObject(netOutline, true);
+            }
 
             // 边框标注改为按每块边框料矩形标注下料长度，序号与右侧边框下料表一致。
-            var frameTable = ReportTables.FrameTable(result, framePieces);
+            var frameTable = useSelectedOutlineAsNet
+                ? new List<ReportItem>()
+                : ReportTables.FrameTable(result, framePieces);
             var frameRowIndexes = new Dictionary<string, int>();
             for (var i = 0; i < frameTable.Count; i++)
             {
                 frameRowIndexes[frameTable[i].Direction + "|" + ReportTables.Format(frameTable[i].Length)] = i + 1;
             }
 
-            DrawBorderDimensions(
-                modelSpace,
-                transaction,
-                result.Geometry,
-                framePieces,
-                frameRowIndexes,
-                insertionPoint,
-                plateHeight);
+            if (!useSelectedOutlineAsNet)
+            {
+                DrawBorderDimensions(
+                    modelSpace,
+                    transaction,
+                    result.Geometry,
+                    framePieces,
+                    frameRowIndexes,
+                    insertionPoint,
+                    plateHeight);
+            }
 
             var verticalLayer = "纵条";
             var horizontalLayer = "横条";
@@ -656,19 +708,26 @@ namespace SteelGrid.Plugin.Commands
 
             var plate = result.Geometry.Plate;
             var tableLeft = insertionPoint.X + plate.W + 260.0;
-            var frameLayout = DrawTable(
-                modelSpace,
-                transaction,
-                tableLeft,
-                insertionPoint.Y,
-                frameTable,
-                "边框下料（共 " + frameTable.Sum(item => item.Count) + " 根）");
+            var tableTop = insertionPoint.Y;
+            var frameLayout = new TableLayout();
+            if (!useSelectedOutlineAsNet)
+            {
+                frameLayout = DrawTable(
+                    modelSpace,
+                    transaction,
+                    tableLeft,
+                    tableTop,
+                    frameTable,
+                    "边框下料（共 " + frameTable.Sum(item => item.Count) + " 根）");
+                tableTop = frameLayout.Bottom - 80.0;
+            }
+
             var verticalRows = ReportTables.ReportTable(result, "纵向");
             var verticalLayout = DrawTable(
                 modelSpace,
                 transaction,
                 tableLeft,
-                frameLayout.Bottom - 80.0,
+                tableTop,
                 verticalRows,
                 "纵向" + result.Spec.Vertical.TypeName + "下料（共 "
                 + verticalRows.Sum(item => item.Count) + " 根）");
@@ -682,9 +741,11 @@ namespace SteelGrid.Plugin.Commands
                 "横向" + result.Spec.Horizontal.TypeName + "下料（共 "
                 + horizontalRows.Sum(item => item.Count) + " 根）");
             var tableBottom = horizontalLayout.Bottom;
-            var tableWidth = Math.Max(
-                frameLayout.Width,
-                Math.Max(verticalLayout.Width, horizontalLayout.Width));
+            var tableWidth = Math.Max(verticalLayout.Width, horizontalLayout.Width);
+            if (!useSelectedOutlineAsNet)
+            {
+                tableWidth = Math.Max(frameLayout.Width, tableWidth);
+            }
 
             var groupLeft = insertionPoint.X - 260.0;
             var groupRight = tableLeft + tableWidth + 60.0;
@@ -1253,11 +1314,12 @@ namespace SteelGrid.Plugin.Commands
             Database database,
             Transaction transaction,
             LayoutItem item,
-            Point3d insertionPoint)
+            Point3d insertionPoint,
+            bool useSelectedOutlineAsNet)
         {
             return item.Outline != null
-                ? DrawOutlineResult(database, transaction, item.Outline, insertionPoint)
-                : DrawResult(database, transaction, item.Rectangle, insertionPoint);
+                ? DrawOutlineResult(database, transaction, item.Outline, insertionPoint, useSelectedOutlineAsNet)
+                : DrawResult(database, transaction, item.Rectangle, insertionPoint, useSelectedOutlineAsNet);
         }
 
         private static void EnsureLayers(Database database, Transaction transaction)
@@ -1300,7 +1362,8 @@ namespace SteelGrid.Plugin.Commands
             Database database,
             Transaction transaction,
             OutlineLayoutResult layout,
-            Point3d insertionPoint)
+            Point3d insertionPoint,
+            bool useSelectedOutlineAsNet)
         {
             var shape = layout.Shape;
             var spec = layout.Spec;
@@ -1312,18 +1375,51 @@ namespace SteelGrid.Plugin.Commands
             // 局部包围盒经过旋转后不一定从插入点向右下角展开，这里把图形左上角对齐到插入点。
             var origin = AlignOutlineInsertion(layout, insertionPoint);
 
-            // 边框料：每条边一根，斜边料是旋转矩形。
-            var framePieces = PolygonFrameSplitter.GetPieces(layout.Plate, layout.Net, spec.FrameT, spec.LoadDirection);
+            // 边框料由 Core 按原始边归属拆分；圆弧采样弦不进入直料清单。
+            var framePieces = useSelectedOutlineAsNet
+                ? new List<RotatedPiece>()
+                : layout.FramePieces;
+            var curvedFramePieces = useSelectedOutlineAsNet
+                ? new List<CurvedFramePiece>()
+                : layout.CurvedFramePieces;
+
             foreach (var piece in framePieces)
             {
                 AppendMappedPolyline(modelSpace, transaction, piece.Corners(), shape, origin, "外轮廓");
             }
 
-            AppendMappedPolyline(modelSpace, transaction, layout.Plate.Vertices, shape, origin, "外轮廓");
-            AppendMappedPolyline(modelSpace, transaction, layout.Net.Vertices, shape, origin, "内边框");
+            foreach (var curvedPiece in curvedFramePieces)
+            {
+                AppendMappedArcBand(
+                    modelSpace,
+                    transaction,
+                    curvedPiece,
+                    shape,
+                    origin,
+                    "外轮廓");
+            }
+
+            if (useSelectedOutlineAsNet)
+            {
+                // 所选轮廓已经在图中；此模式只补画条材，不重复绘制板件和边框线。
+            }
+            else if (layout.CurvedFramePieces.Count == 0)
+            {
+                AppendMappedPolyline(modelSpace, transaction, layout.Plate.Vertices, shape, origin, "外轮廓");
+                AppendMappedPolyline(modelSpace, transaction, layout.Net.Vertices, shape, origin, "内边框");
+            }
+            else
+            {
+                AppendMappedCurvedOutline(modelSpace, transaction, layout.Plate,
+                    layout.CurvedFramePieces, layout.CurvedFrameEdges, shape, origin, "外轮廓", true);
+                AppendMappedCurvedOutline(modelSpace, transaction, layout.Net,
+                    layout.CurvedFramePieces, layout.CurvedFrameEdges, shape, origin, "内边框", false);
+            }
 
             // 边框标注：文字放在边框料外侧，序号与边框下料表一致。
-            var frameTable = ReportTables.FrameTable(framePieces);
+            var frameTable = useSelectedOutlineAsNet
+                ? new List<ReportItem>()
+                : ReportTables.FrameTable(framePieces, curvedFramePieces);
             var frameRowIndexes = new Dictionary<string, int>();
             for (var i = 0; i < frameTable.Count; i++)
             {
@@ -1350,6 +1446,27 @@ namespace SteelGrid.Plugin.Commands
                     "边框标注",
                     true,
                     TextRotation(shape, radians));
+            }
+
+            foreach (var piece in curvedFramePieces)
+            {
+                var offset = spec.FrameT / 2.0 + BorderTextOffset;
+                var textPoint = MapPoint(
+                    shape,
+                    origin,
+                    piece.Center.X + piece.Outward.X * offset,
+                    piece.Center.Y + piece.Outward.Y * offset);
+                var index = frameRowIndexes["弧形|" + ReportTables.Format(piece.Length)];
+                AddText(
+                    modelSpace,
+                    transaction,
+                    textPoint.X,
+                    textPoint.Y,
+                    "边框" + index + "  " + ReportTables.Format(piece.Length),
+                    15.0,
+                    "边框标注",
+                    true,
+                    TextRotation(shape, piece.TangentAngle));
             }
 
             // 条：斜边截断已按短边切平，每段本身就是下料矩形。
@@ -1427,22 +1544,31 @@ namespace SteelGrid.Plugin.Commands
             }
 
             var tableLeft = maxX + 260.0;
-            var frameLayout = DrawTable(
-                modelSpace,
-                transaction,
-                tableLeft,
-                maxY,
-                frameTable,
-                "边框下料（共 " + frameTable.Sum(item => item.Count) + " 根）");
+            var tableTop = maxY;
+            var frameLayout = new TableLayout();
+            if (!useSelectedOutlineAsNet)
+            {
+                frameLayout = DrawTable(
+                    modelSpace,
+                    transaction,
+                    tableLeft,
+                    tableTop,
+                    frameTable,
+                    "边框下料（共 " + frameTable.Sum(item => item.Count) + " 根）");
+                tableTop = frameLayout.Bottom - 80.0;
+            }
+
             var verticalRows = ReportTables.ReportTable(layout.Bars, "纵向");
+            SwapHoleDistanceColumns(verticalRows);
             var verticalLayout = DrawTable(
                 modelSpace,
                 transaction,
                 tableLeft,
-                frameLayout.Bottom - 80.0,
+                tableTop,
                 verticalRows,
                 "纵向" + spec.Vertical.TypeName + "下料（共 " + verticalRows.Sum(item => item.Count) + " 根）");
             var horizontalRows = PluginTableRows.GetHorizontalRows(layout.Bars);
+            SwapHoleDistanceColumns(horizontalRows);
             var horizontalLayout = DrawTable(
                 modelSpace,
                 transaction,
@@ -1451,7 +1577,11 @@ namespace SteelGrid.Plugin.Commands
                 horizontalRows,
                 "横向" + spec.Horizontal.TypeName + "下料（共 " + horizontalRows.Sum(item => item.Count) + " 根）");
             var tableBottom = horizontalLayout.Bottom;
-            var tableWidth = Math.Max(frameLayout.Width, Math.Max(verticalLayout.Width, horizontalLayout.Width));
+            var tableWidth = Math.Max(verticalLayout.Width, horizontalLayout.Width);
+            if (!useSelectedOutlineAsNet)
+            {
+                tableWidth = Math.Max(frameLayout.Width, tableWidth);
+            }
 
             var groupLeft = minX - 260.0;
             var groupRight = tableLeft + tableWidth + 60.0;
@@ -1465,7 +1595,21 @@ namespace SteelGrid.Plugin.Commands
                 "分组边框");
             modelSpace.AppendEntity(border);
             transaction.AddNewlyCreatedDBObject(border, true);
-            return new GroupExtents(groupRight - groupLeft, groupTop - groupBottom, framePieces.Count);
+            return new GroupExtents(
+                groupRight - groupLeft,
+                groupTop - groupBottom,
+                useSelectedOutlineAsNet ? 0 : framePieces.Count + curvedFramePieces.Count);
+        }
+
+        /// <summary>多边形局部轴与图面标注端点相反，表格列顺序要与图上“首/尾”标注一致。</summary>
+        private static void SwapHoleDistanceColumns(List<ReportItem> rows)
+        {
+            foreach (var row in rows)
+            {
+                var first = row.FirstHole;
+                row.FirstHole = row.LastHole;
+                row.LastHole = first;
+            }
         }
 
         private static void DrawOutlineHoleAnnotations(
@@ -1536,17 +1680,19 @@ namespace SteelGrid.Plugin.Commands
         {
             var bounds = layout.Plate.Bounds;
             var shape = layout.Shape;
-            double minX = double.MaxValue, minY = double.MaxValue;
+            double minX = double.MaxValue, maxY = double.MinValue;
             foreach (var x in new[] { bounds.X0, bounds.X1 })
             {
                 foreach (var y in new[] { bounds.Y0, bounds.Y1 })
                 {
                     minX = Math.Min(minX, x * shape.AxisX.X + y * shape.AxisY.X);
-                    minY = Math.Min(minY, x * shape.AxisX.Y + y * shape.AxisY.Y);
+                    maxY = Math.Max(maxY, x * shape.AxisX.Y + y * shape.AxisY.Y);
                 }
             }
 
-            return new Point3d(insertionPoint.X - minX, insertionPoint.Y - minY, 0.0);
+            // 批量排布的插入点统一表示组图左上角；纵向输出会从该点向下留出前一组的总高度。
+            // 这里若用 minY 把左下角对齐，较高的后续弧形图会向上伸入前一组，造成组图重叠。
+            return new Point3d(insertionPoint.X - minX, insertionPoint.Y - maxY, 0.0);
         }
 
         private static Point3d MapPoint(OutlineShape shape, Point3d origin, double x, double y)
@@ -1576,6 +1722,136 @@ namespace SteelGrid.Plugin.Commands
             polyline.Layer = layer;
             modelSpace.AppendEntity(polyline);
             transaction.AddNewlyCreatedDBObject(polyline, true);
+        }
+
+        private static void AppendMappedArcBand(
+            BlockTableRecord modelSpace,
+            Transaction transaction,
+            CurvedFramePiece piece,
+            OutlineShape shape,
+            Point3d origin,
+            string layer)
+        {
+            var points = new[]
+            {
+                piece.PlateArc.Start,
+                piece.PlateArc.End,
+                piece.NetArc.End,
+                piece.NetArc.Start
+            };
+            var bulges = new[]
+            {
+                Math.Tan(piece.PlateArc.SweepAngle / 4.0),
+                0.0,
+                Math.Tan(-piece.NetArc.SweepAngle / 4.0),
+                0.0
+            };
+            var polyline = new Polyline();
+            for (var i = 0; i < points.Length; i++)
+            {
+                var point = MapPoint(shape, origin, points[i].X, points[i].Y);
+                polyline.AddVertexAt(i, new Point2d(point.X, point.Y), bulges[i], 0.0, 0.0);
+            }
+
+            polyline.Closed = true;
+            polyline.Layer = layer;
+            modelSpace.AppendEntity(polyline);
+            transaction.AddNewlyCreatedDBObject(polyline, true);
+        }
+
+        /// <summary>弧段在 CAD 轮廓中只占一条带 bulge 的边；离散弦仅留在裁剪几何中。</summary>
+        private static void AppendMappedCurvedOutline(
+            BlockTableRecord modelSpace,
+            Transaction transaction,
+            Polygon polygon,
+            IReadOnlyList<CurvedFramePiece> curvedPieces,
+            IReadOnlyList<bool> curvedEdges,
+            OutlineShape shape,
+            Point3d origin,
+            string layer,
+            bool plateBoundary)
+        {
+            var count = polygon.Vertices.Count;
+            if (curvedEdges == null || curvedEdges.Count != count)
+            {
+                throw new ArgumentException("圆弧边标记与 CAD 轮廓不一致");
+            }
+
+            var startIndex = -1;
+            for (var i = 0; i < count; i++)
+            {
+                if (!curvedEdges[i])
+                {
+                    startIndex = i;
+                    break;
+                }
+            }
+
+            if (startIndex < 0 || curvedPieces == null || curvedPieces.Count == 0)
+            {
+                throw new ArgumentException("未找到圆弧在轮廓中的起始边");
+            }
+
+            var polyline = new Polyline();
+            var index = startIndex;
+            var processed = 0;
+            while (processed < count)
+            {
+                if (!curvedEdges[index])
+                {
+                    var point = MapPoint(shape, origin, polygon.Vertices[index].X, polygon.Vertices[index].Y);
+                    polyline.AddVertexAt(polyline.NumberOfVertices, new Point2d(point.X, point.Y), 0.0, 0.0, 0.0);
+                    index = (index + 1) % count;
+                    processed++;
+                    continue;
+                }
+
+                var arcStartIndex = index;
+                var arcEndIndex = index;
+                do
+                {
+                    arcEndIndex = (arcEndIndex + 1) % count;
+                    processed++;
+                }
+                while (curvedEdges[arcEndIndex] && processed < count);
+
+                var sampledStart = polygon.Vertices[arcStartIndex];
+                CurvedFramePiece matched = null;
+                var direct = true;
+                var bestDistance = double.MaxValue;
+                foreach (var candidate in curvedPieces)
+                {
+                    var arc = plateBoundary ? candidate.OutlinePlateArc : candidate.OutlineNetArc;
+                    var startDistance = DistanceSquared(sampledStart, arc.Start);
+                    var endDistance = DistanceSquared(sampledStart, arc.End);
+                    var candidateDistance = Math.Min(startDistance, endDistance);
+                    if (candidateDistance < bestDistance)
+                    {
+                        matched = candidate;
+                        direct = startDistance <= endDistance;
+                        bestDistance = candidateDistance;
+                    }
+                }
+
+                var selectedArc = plateBoundary ? matched.OutlinePlateArc : matched.OutlineNetArc;
+                var exactStart = direct ? selectedArc.Start : selectedArc.End;
+                var bulge = Math.Tan((direct ? selectedArc.SweepAngle : -selectedArc.SweepAngle) / 4.0);
+                var mapped = MapPoint(shape, origin, exactStart.X, exactStart.Y);
+                polyline.AddVertexAt(polyline.NumberOfVertices, new Point2d(mapped.X, mapped.Y), bulge, 0.0, 0.0);
+                index = arcEndIndex;
+            }
+
+            polyline.Closed = true;
+            polyline.Layer = layer;
+            modelSpace.AppendEntity(polyline);
+            transaction.AddNewlyCreatedDBObject(polyline, true);
+        }
+
+        private static double DistanceSquared(Point2D a, Point2D b)
+        {
+            var dx = a.X - b.X;
+            var dy = a.Y - b.Y;
+            return dx * dx + dy * dy;
         }
 
         private static void AddMappedLine(

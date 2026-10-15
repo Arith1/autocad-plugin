@@ -9,6 +9,8 @@ namespace SteelGrid.Core.Geometry
     /// </summary>
     public sealed class RotatedPiece
     {
+        private readonly List<Point2D> _outline;
+
         public RotatedPiece(
             int edgeIndex,
             string direction,
@@ -16,7 +18,8 @@ namespace SteelGrid.Core.Geometry
             double length,
             double thickness,
             double angleDeg,
-            Point2D outward)
+            Point2D outward,
+            IReadOnlyList<Point2D> outline = null)
         {
             EdgeIndex = edgeIndex;
             Direction = direction;
@@ -25,6 +28,7 @@ namespace SteelGrid.Core.Geometry
             Thickness = thickness;
             AngleDeg = angleDeg;
             Outward = outward;
+            _outline = outline == null ? null : new List<Point2D>(outline);
         }
 
         /// <summary>对应的板边序号（局部顶点下标）。</summary>
@@ -46,9 +50,14 @@ namespace SteelGrid.Core.Geometry
         /// <summary>板外方向的单位向量（放边框标注用）。</summary>
         public Point2D Outward { get; }
 
-        /// <summary>四个角点（局部坐标，逆时针）。</summary>
+        /// <summary>实际绘制轮廓点（局部坐标，逆时针）；普通料为四角矩形。</summary>
         public List<Point2D> Corners()
         {
+            if (_outline != null)
+            {
+                return new List<Point2D>(_outline);
+            }
+
             var radians = AngleDeg * Math.PI / 180.0;
             var ex = Math.Cos(radians);
             var ey = Math.Sin(radians);

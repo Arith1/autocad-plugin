@@ -20,7 +20,9 @@ namespace SteelGrid.Core.Geometry
             Polygon plate,
             Polygon net,
             double frameThickness,
-            LoadDirection loadDirection)
+            LoadDirection loadDirection,
+            IReadOnlyList<bool> curvedEdges = null,
+            bool curveCoversStraightBars = false)
         {
             var pieces = new List<RotatedPiece>();
             if (plate == null || net == null || plate.IsEmpty || net.IsEmpty || frameThickness <= 0.0)
@@ -32,6 +34,11 @@ namespace SteelGrid.Core.Geometry
             if (net.Vertices.Count != count)
             {
                 return pieces;
+            }
+
+            if (curvedEdges != null && curvedEdges.Count != count)
+            {
+                throw new ArgumentException("弧段边标记与轮廓边数不一致", nameof(curvedEdges));
             }
 
             var horizontalFlags = new bool[count];
@@ -55,6 +62,11 @@ namespace SteelGrid.Core.Geometry
 
             for (var i = 0; i < count; i++)
             {
+                if (curvedEdges != null && curvedEdges[i])
+                {
+                    continue;
+                }
+
                 var outerA = plate.Vertices[i];
                 var outerB = plate.Vertices[(i + 1) % count];
                 var innerA = net.Vertices[i];
@@ -73,7 +85,9 @@ namespace SteelGrid.Core.Geometry
                 var ey = dy / outerLength;
                 var nx = -ey;
                 var ny = ex;
-                var wrapped = loadDirection == LoadDirection.Vertical
+                // isCovered 表示本边由相邻边框料覆盖：竖向受力时竖边让位、横边包住竖边；
+                // 水平受力时规则对调。
+                var isCovered = loadDirection == LoadDirection.Vertical
                     ? !horizontalFlags[i]
                     : horizontalFlags[i];
 
@@ -107,7 +121,7 @@ namespace SteelGrid.Core.Geometry
                 var best = 0;
                 for (var x = 1; x < spans.Length; x++)
                 {
-                    if (wrapped ? spans[x] < spans[best] : spans[x] > spans[best])
+                    if (isCovered ? spans[x] < spans[best] : spans[x] > spans[best])
                     {
                         best = x;
                     }
@@ -122,13 +136,13 @@ namespace SteelGrid.Core.Geometry
                 }
 
                 // 位置：包边按外框线坐标、被包按内框线坐标取中点（两条线的起点差一个边框厚）
-                var origin = wrapped ? innerA : outerA;
+                var origin = isCovered ? innerA : outerA;
                 var midStart = ((startPoint.X - origin.X) * ex + (startPoint.Y - origin.Y) * ey
                                 + (endPoint.X - origin.X) * ex + (endPoint.Y - origin.Y) * ey) / 2.0;
                 var mid = new Point2D(origin.X + ex * midStart, origin.Y + ey * midStart);
                 var center = new Point2D(
-                    mid.X + (wrapped ? -1.0 : 1.0) * nx * frameThickness / 2.0,
-                    mid.Y + (wrapped ? -1.0 : 1.0) * ny * frameThickness / 2.0);
+                    mid.X + (isCovered ? -1.0 : 1.0) * nx * frameThickness / 2.0,
+                    mid.Y + (isCovered ? -1.0 : 1.0) * ny * frameThickness / 2.0);
 
                 var angle = Math.Atan2(dy, dx) * 180.0 / Math.PI;
                 while (angle <= -90.0)
@@ -141,14 +155,33 @@ namespace SteelGrid.Core.Geometry
                     angle -= 180.0;
                 }
 
-                pieces.Add(new RotatedPiece(
+                var piece = new RotatedPiece(
                     i,
                     horizontalFlags[i] ? "横向" : "纵向",
                     center,
                     length,
                     frameThickness,
                     angle,
-                    new Point2D(-nx, -ny)));
+                    new Point2D(-nx, -ny));
+
+                if (curveCoversStraightBars)
+                {
+                    // On a sector, arc bands cover the radial bars. Trim only
+                    // the bar corners that cross the true outer outline at an
+                    // arc joint; semicircle bars retain their covering ends.
+                    var outline = KeepCornersInside(piece.Corners(), center, plate);
+                    piece = new RotatedPiece(
+                        i,
+                        horizontalFlags[i] ? "横向" : "纵向",
+                        center,
+                        length,
+                        frameThickness,
+                        angle,
+                        new Point2D(-nx, -ny),
+                        outline);
+                }
+
+                pieces.Add(piece);
             }
 
             return pieces;
@@ -221,5 +254,157 @@ namespace SteelGrid.Core.Geometry
             var dy = b.Y - a.Y;
             return Math.Sqrt(dx * dx + dy * dy);
         }
+
+        private static List<Point2D> KeepCornersInside(
+            IReadOnlyList<Point2D> rectangle,
+            Point2D interiorPoint,
+            Polygon boundary)
+        {
+            var clipped = new List<Point2D>(rectangle);
+            for (var attempt = 0; attempt < 4; attempt++)
+            {
+                var outside = FindOutsidePoint(clipped, boundary);
+                if (!outside.HasValue)
+                {
+                    return clipped;
+                }
+
+                var edgeIndex = NearestEdge(outside.Value, boundary);
+                var edgeStart = boundary.Vertices[edgeIndex];
+                var edgeEnd = boundary.Vertices[(edgeIndex + 1) % boundary.Vertices.Count];
+                clipped = ClipToHalfPlane(clipped, edgeStart, edgeEnd, interiorPoint);
+                if (clipped.Count < 3)
+                {
+                    throw new ArgumentException("扇形直料裁到外框后退化，无法形成边框料");
+                }
+            }
+
+            if (FindOutsidePoint(clipped, boundary).HasValue)
+            {
+                throw new ArgumentException("扇形直料端角无法收进缩尺外框");
+            }
+
+            return clipped;
+        }
+
+        private static Point2D? FindOutsidePoint(IReadOnlyList<Point2D> points, Polygon boundary)
+        {
+            foreach (var point in points)
+            {
+                if (!boundary.Contains(point))
+                {
+                    return point;
+                }
+            }
+
+            return null;
+        }
+
+        private static int NearestEdge(Point2D point, Polygon polygon)
+        {
+            var bestIndex = 0;
+            var bestDistance = double.MaxValue;
+            for (var i = 0; i < polygon.Vertices.Count; i++)
+            {
+                var a = polygon.Vertices[i];
+                var b = polygon.Vertices[(i + 1) % polygon.Vertices.Count];
+                var dx = b.X - a.X;
+                var dy = b.Y - a.Y;
+                var lengthSquared = dx * dx + dy * dy;
+                var t = lengthSquared <= Tol
+                    ? 0.0
+                    : ((point.X - a.X) * dx + (point.Y - a.Y) * dy) / lengthSquared;
+                t = Math.Max(0.0, Math.Min(1.0, t));
+                var x = a.X + t * dx;
+                var y = a.Y + t * dy;
+                var distance = (point.X - x) * (point.X - x) + (point.Y - y) * (point.Y - y);
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    bestIndex = i;
+                }
+            }
+
+            return bestIndex;
+        }
+
+        private static List<Point2D> ClipToHalfPlane(
+            IReadOnlyList<Point2D> polygon,
+            Point2D lineStart,
+            Point2D lineEnd,
+            Point2D keepPoint)
+        {
+            var result = new List<Point2D>();
+            var keepSide = SignedSide(lineStart, lineEnd, keepPoint);
+            if (Math.Abs(keepSide) <= Tol)
+            {
+                throw new ArgumentException("扇形直料定位点落在外框裁切线上");
+            }
+
+            var sign = keepSide > 0.0 ? 1.0 : -1.0;
+            var previous = polygon[polygon.Count - 1];
+            var previousSide = sign * SignedSide(lineStart, lineEnd, previous);
+            var previousInside = previousSide >= -Tol;
+            for (var i = 0; i < polygon.Count; i++)
+            {
+                var current = polygon[i];
+                var currentSide = sign * SignedSide(lineStart, lineEnd, current);
+                var currentInside = currentSide >= -Tol;
+                if (currentInside != previousInside)
+                {
+                    var denominator = previousSide - currentSide;
+                    if (Math.Abs(denominator) > Tol)
+                    {
+                        var t = previousSide / denominator;
+                        result.Add(new Point2D(
+                            previous.X + (current.X - previous.X) * t,
+                            previous.Y + (current.Y - previous.Y) * t));
+                    }
+                }
+
+                if (currentInside)
+                {
+                    result.Add(current);
+                }
+
+                previous = current;
+                previousSide = currentSide;
+                previousInside = currentInside;
+            }
+
+            return RemoveAdjacentDuplicates(result);
+        }
+
+        private static List<Point2D> RemoveAdjacentDuplicates(List<Point2D> points)
+        {
+            var result = new List<Point2D>();
+            foreach (var point in points)
+            {
+                if (result.Count == 0 || DistanceSquared(result[result.Count - 1], point) > Tol * Tol)
+                {
+                    result.Add(point);
+                }
+            }
+
+            if (result.Count > 1 && DistanceSquared(result[0], result[result.Count - 1]) <= Tol * Tol)
+            {
+                result.RemoveAt(result.Count - 1);
+            }
+
+            return result;
+        }
+
+        private static double SignedSide(Point2D a, Point2D b, Point2D point)
+        {
+            return (b.X - a.X) * (point.Y - a.Y) - (b.Y - a.Y) * (point.X - a.X);
+        }
+
+        private static double DistanceSquared(Point2D a, Point2D b)
+        {
+            var dx = a.X - b.X;
+            var dy = a.Y - b.Y;
+            return dx * dx + dy * dy;
+        }
+
     }
 }

@@ -17,7 +17,7 @@ namespace SteelGrid.Plugin.Commands
             }
 
             var editor = document.Editor;
-            editor.WriteMessage("\n钢格板自动排条插件 正式版 2.2 已加载。可用命令：GPGRIDINFO、GPGRIDSET、GPGRID。");
+            editor.WriteMessage("\n钢格板自动排条插件 3.01 已加载。可用命令：GPGRIDINFO、GPGRIDSET、GPGRID、GPGRIDNOBORDER。");
         }
 
         public void Terminate()

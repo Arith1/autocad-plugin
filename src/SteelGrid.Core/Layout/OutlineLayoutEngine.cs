@@ -22,13 +22,113 @@ namespace SteelGrid.Core.Layout
 
             Validation.ValidateForOutline(spec);
 
-            // 直接偏移：对原始闭合轮廓（含缺角/缺口）向内偏移缩尺，再偏移一个边框厚。
+            // 按外框线 → 内框线的顺序对整个闭合轮廓偏移；边框带就是两条完整轮廓之间的区域。
             var rawOutline = new Polygon(shape.LocalOutline);
             var plate = rawOutline.Offset(spec.Shrink);
-            var net = rawOutline.Offset(spec.Shrink + spec.FrameT);
+            var net = plate.Offset(spec.FrameT);
             if (net.IsEmpty)
             {
                 throw new ArgumentException("缩尺或边框厚度过大，净空不存在");
+            }
+
+            var curvedFrameEdges = shape.GetCurvedNotchEdgeMask(rawOutline.Vertices);
+            if (curvedFrameEdges != null
+                && (plate.Vertices.Count != curvedFrameEdges.Count || net.Vertices.Count != curvedFrameEdges.Count))
+            {
+                throw new ArgumentException("圆弧偏移后边数改变，无法正确拆分边框料");
+            }
+
+            var curvedFramePieces = new List<CurvedFramePiece>();
+            for (var arcIndex = 0; arcIndex < shape.CurvedBoundaryCount; arcIndex++)
+            {
+                var sign = shape.GetCurvedNotchOutwardRadiusSign(arcIndex);
+                CircularArc plateArc;
+                CircularArc netArc;
+                try
+                {
+                    plateArc = shape.OffsetCurvedNotchArc(arcIndex, spec.Shrink);
+                    netArc = shape.OffsetCurvedNotchArc(arcIndex, spec.Shrink + spec.FrameT);
+                }
+                catch (ArgumentException ex)
+                {
+                    throw new ArgumentException("缩尺或边框厚度过大，曲线缺口偏移失败：" + ex.Message);
+                }
+
+                var bandPlateArc = plateArc;
+                var bandNetArc = netArc;
+                if (shape.CurvedBoundaryCount == 2)
+                {
+                    // Sector arcs cover the two radial straight bars. Give each
+                    // curved band a shared angle while leaving the real net arc
+                    // untouched for the straight-bar layout and clipping.
+                    bandNetArc = new CircularArc(
+                        netArc.Center, netArc.Radius, plateArc.StartAngle, plateArc.SweepAngle);
+                }
+                else if (shape.CurvedBoundaryCount == 1 && shape.IsCurvedBoundaryCorner(arcIndex))
+                {
+                    // A clipped rectangle corner is not a semicircle notch. Each
+                    // arc end follows its adjacent straight frame's wrap rule:
+                    // the covered edge uses the plate-side line; the wrapping
+                    // edge uses the net-side line. This lets the two arc radii
+                    // share the correct straight-bar end faces.
+                    bandPlateArc = AlignCornerArcToStraightFrameEnds(
+                        plateArc,
+                        plateArc,
+                        netArc,
+                        shape.CurvedArcs[arcIndex],
+                        rawOutline,
+                        plate,
+                        net,
+                        curvedFrameEdges,
+                        spec.LoadDirection);
+                    bandNetArc = AlignCornerArcToStraightFrameEnds(
+                        netArc,
+                        plateArc,
+                        netArc,
+                        shape.CurvedArcs[arcIndex],
+                        rawOutline,
+                        plate,
+                        net,
+                        curvedFrameEdges,
+                        spec.LoadDirection);
+                }
+                else if (shape.CurvedBoundaryCount == 1 && spec.LoadDirection == LoadDirection.Vertical)
+                {
+                    var plateIsShorter = plateArc.Radius < netArc.Radius;
+                    var shorterArc = plateIsShorter ? plateArc : netArc;
+                    var longerArc = plateIsShorter ? netArc : plateArc;
+                    var longerOutline = plateIsShorter ? net : plate;
+
+                    // Keep the longer-radius offset arc and align the shorter arc
+                    // to the longer side's adjacent straight border lines. This
+                    // follows the semicircle reference geometry, not the sector
+                    // common-angle rule.
+                    var alignedShorterArc = AlignShorterArcToLongerBorderLines(
+                        shorterArc, longerArc, longerOutline, curvedFrameEdges);
+                    if (plateIsShorter)
+                    {
+                        bandPlateArc = alignedShorterArc;
+                    }
+                    else
+                    {
+                        bandNetArc = alignedShorterArc;
+                    }
+                }
+
+                curvedFramePieces.Add(new CurvedFramePiece(
+                    plateArc,
+                    netArc,
+                    sign,
+                    bandPlateArc,
+                    bandNetArc));
+            }
+
+            if (curvedFramePieces.Count > 0)
+            {
+                // Keep exact curved endpoints and the corrected sampled arc chain
+                // on the same contour used for clipping, drawing, and frame splitting.
+                plate = WithExactArcEnds(plate, curvedFramePieces, curvedFrameEdges, true);
+                net = WithExactArcEnds(net, curvedFramePieces, curvedFrameEdges, false);
             }
 
             // 缺口区域按边框厚外扩，从净空里挖掉（缺口四周的边框料占位）。
@@ -58,7 +158,8 @@ namespace SteelGrid.Core.Layout
                 spec.Vertical,
                 BandAxis.Vertical,
                 bounds.H,
-                spec.FrameT);
+                spec.FrameT,
+                shape.CurvedBoundaryCount > 0);
             var horizontalBars = BuildBars(
                 net,
                 netHoles,
@@ -66,7 +167,8 @@ namespace SteelGrid.Core.Layout
                 spec.Horizontal,
                 BandAxis.Horizontal,
                 bounds.W,
-                spec.FrameT);
+                spec.FrameT,
+                shape.CurvedBoundaryCount > 0);
 
             foreach (var bar in verticalBars)
             {
@@ -105,6 +207,17 @@ namespace SteelGrid.Core.Layout
                 RemoveTooCloseHoles(bar, spec);
             }
 
+            // Keep straight stock on the actual offset outlines. Rebuilding the
+            // entire sampled contour from extended arc endpoints skews the two
+            // neighboring straight edges and can make the semicircle fail layout.
+            var framePieces = PolygonFrameSplitter.GetPieces(
+                plate,
+                net,
+                spec.FrameT,
+                spec.LoadDirection,
+                curvedFrameEdges,
+                shape.CurvedBoundaryCount == 2);
+
             var geometry = new PlateGeometry(spec, plate.Bounds, net.Bounds, new List<NotchGeo>());
             return new OutlineLayoutResult(
                 shape,
@@ -113,7 +226,303 @@ namespace SteelGrid.Core.Layout
                 net,
                 plateNotches,
                 netHoles,
+                curvedFramePieces,
+                curvedFrameEdges,
+                framePieces,
                 new LayoutResult(geometry, verticalBars, horizontalBars));
+        }
+
+        /// <summary>半圆垂直受力：用较大半径侧的直边确定较小半径弧的端点。</summary>
+        private static CircularArc AlignShorterArcToLongerBorderLines(
+            CircularArc shorterArc,
+            CircularArc longerArc,
+            Polygon longerOutline,
+            IReadOnlyList<bool> curvedEdges)
+        {
+            if (shorterArc == null || longerArc == null || longerOutline == null
+                || curvedEdges == null || curvedEdges.Count != longerOutline.Vertices.Count)
+            {
+                throw new ArgumentException("无法确定半圆弧料端点对应的内框直线");
+            }
+
+            var count = curvedEdges.Count;
+            var runStart = -1;
+            for (var i = 0; i < count; i++)
+            {
+                if (curvedEdges[i] && !curvedEdges[(i + count - 1) % count])
+                {
+                    runStart = i;
+                    break;
+                }
+            }
+
+            if (runStart < 0)
+            {
+                throw new ArgumentException("未找到半圆弧对应的内框直线");
+            }
+
+            var runEnd = runStart;
+            do
+            {
+                runEnd = (runEnd + 1) % count;
+            }
+            while (curvedEdges[runEnd] && runEnd != runStart);
+
+            var before = (runStart + count - 1) % count;
+            var after = (runEnd + 1) % count;
+            var sampledStart = longerOutline.Vertices[runStart];
+            var startsAtArcStart = DistanceSquared(sampledStart, longerArc.Start)
+                                   <= DistanceSquared(sampledStart, longerArc.End);
+            var startLineNeighbor = longerOutline.Vertices[startsAtArcStart ? before : after];
+            var endLineNeighbor = longerOutline.Vertices[startsAtArcStart ? after : before];
+
+            var shorterStart = IntersectLineWithCircle(
+                longerArc.Start, startLineNeighbor, shorterArc.Center, shorterArc.Radius, shorterArc.Start);
+            var shorterEnd = IntersectLineWithCircle(
+                longerArc.End, endLineNeighbor, shorterArc.Center, shorterArc.Radius, shorterArc.End);
+            var startAngle = Math.Atan2(shorterStart.Y - shorterArc.Center.Y, shorterStart.X - shorterArc.Center.X);
+            var endAngle = Math.Atan2(shorterEnd.Y - shorterArc.Center.Y, shorterEnd.X - shorterArc.Center.X);
+            var sweep = endAngle - startAngle;
+            if (shorterArc.SweepAngle > 0.0)
+            {
+                while (sweep <= 0.0) sweep += 2.0 * Math.PI;
+            }
+            else
+            {
+                while (sweep >= 0.0) sweep -= 2.0 * Math.PI;
+            }
+
+            return new CircularArc(shorterArc.Center, shorterArc.Radius, startAngle, sweep);
+        }
+
+        /// <summary>缺角弧带两端分别按相邻直边的包边关系投影。</summary>
+        private static CircularArc AlignCornerArcToStraightFrameEnds(
+            CircularArc targetArc,
+            CircularArc plateArc,
+            CircularArc netArc,
+            CircularArc rawArc,
+            Polygon rawOutline,
+            Polygon plateOutline,
+            Polygon netOutline,
+            IReadOnlyList<bool> curvedEdges,
+            LoadDirection loadDirection)
+        {
+            if (targetArc == null || plateArc == null || netArc == null || rawArc == null
+                || rawOutline == null || plateOutline == null || netOutline == null
+                || curvedEdges == null || curvedEdges.Count != rawOutline.Vertices.Count
+                || plateOutline.Vertices.Count != curvedEdges.Count
+                || netOutline.Vertices.Count != curvedEdges.Count)
+            {
+                throw new ArgumentException("无法确定圆弧缺角与直边框料的连接端点");
+            }
+
+            var count = curvedEdges.Count;
+            var runStart = -1;
+            for (var i = 0; i < count; i++)
+            {
+                if (curvedEdges[i] && !curvedEdges[(i + count - 1) % count])
+                {
+                    runStart = i;
+                    break;
+                }
+            }
+
+            if (runStart < 0)
+            {
+                throw new ArgumentException("未找到圆弧缺角的离散边界");
+            }
+
+            var runEnd = runStart;
+            do
+            {
+                runEnd = (runEnd + 1) % count;
+            }
+            while (curvedEdges[runEnd] && runEnd != runStart);
+
+            var before = (runStart + count - 1) % count;
+            var after = (runEnd + 1) % count;
+            var runStartPoint = rawOutline.Vertices[runStart];
+            var startsAtRunStart = DistanceSquared(runStartPoint, rawArc.Start)
+                                   <= DistanceSquared(runStartPoint, rawArc.End);
+
+            var startVertex = startsAtRunStart ? runStart : runEnd;
+            var startNeighbor = startsAtRunStart ? before : after;
+            var endVertex = startsAtRunStart ? runEnd : runStart;
+            var endNeighbor = startsAtRunStart ? after : before;
+
+            var startFromPlate = UsePlateSideForCornerEndpoint(
+                rawOutline.Vertices[startVertex],
+                rawOutline.Vertices[startNeighbor],
+                loadDirection);
+            var endFromPlate = UsePlateSideForCornerEndpoint(
+                rawOutline.Vertices[endVertex],
+                rawOutline.Vertices[endNeighbor],
+                loadDirection);
+
+            var startSourceArc = startFromPlate ? plateArc : netArc;
+            var startSourceOutline = startFromPlate ? plateOutline : netOutline;
+            var endSourceArc = endFromPlate ? plateArc : netArc;
+            var endSourceOutline = endFromPlate ? plateOutline : netOutline;
+
+            var startPoint = IntersectLineWithCircle(
+                startsAtRunStart ? startSourceArc.Start : startSourceArc.End,
+                startSourceOutline.Vertices[startNeighbor],
+                targetArc.Center,
+                targetArc.Radius,
+                targetArc.Start);
+            var endPoint = IntersectLineWithCircle(
+                startsAtRunStart ? endSourceArc.End : endSourceArc.Start,
+                endSourceOutline.Vertices[endNeighbor],
+                targetArc.Center,
+                targetArc.Radius,
+                targetArc.End);
+
+            return ArcWithEndpoints(targetArc, startPoint, endPoint);
+        }
+
+        private static bool UsePlateSideForCornerEndpoint(
+            Point2D edgeA,
+            Point2D edgeB,
+            LoadDirection loadDirection)
+        {
+            var dx = edgeB.X - edgeA.X;
+            var dy = edgeB.Y - edgeA.Y;
+            var angle = Math.Atan2(dy, dx) * 180.0 / Math.PI;
+            while (angle <= -90.0)
+            {
+                angle += 180.0;
+            }
+
+            while (angle > 90.0)
+            {
+                angle -= 180.0;
+            }
+
+            var horizontal = Math.Abs(angle) <= 45.0;
+            var isCovered = loadDirection == LoadDirection.Vertical ? !horizontal : horizontal;
+            return isCovered;
+        }
+
+        private static CircularArc ArcWithEndpoints(CircularArc arc, Point2D start, Point2D end)
+        {
+            var startAngle = Math.Atan2(start.Y - arc.Center.Y, start.X - arc.Center.X);
+            var endAngle = Math.Atan2(end.Y - arc.Center.Y, end.X - arc.Center.X);
+            var sweep = endAngle - startAngle;
+            if (arc.SweepAngle > 0.0)
+            {
+                while (sweep <= 0.0) sweep += 2.0 * Math.PI;
+            }
+            else
+            {
+                while (sweep >= 0.0) sweep -= 2.0 * Math.PI;
+            }
+
+            return new CircularArc(arc.Center, arc.Radius, startAngle, sweep);
+        }
+
+        private static Point2D IntersectLineWithCircle(
+            Point2D linePoint,
+            Point2D lineNeighbor,
+            Point2D center,
+            double radius,
+            Point2D preferred)
+        {
+            var dx = lineNeighbor.X - linePoint.X;
+            var dy = lineNeighbor.Y - linePoint.Y;
+            var length = Math.Sqrt(dx * dx + dy * dy);
+            if (length <= Eps)
+            {
+                throw new ArgumentException("弧端相邻边框直线长度过小");
+            }
+
+            var ux = dx / length;
+            var uy = dy / length;
+            var fromCenterX = linePoint.X - center.X;
+            var fromCenterY = linePoint.Y - center.Y;
+            var along = -(fromCenterX * ux + fromCenterY * uy);
+            var closestX = linePoint.X + along * ux;
+            var closestY = linePoint.Y + along * uy;
+            var offsetX = closestX - center.X;
+            var offsetY = closestY - center.Y;
+            var remainder = radius * radius - offsetX * offsetX - offsetY * offsetY;
+            if (remainder < -1e-7)
+            {
+                throw new ArgumentException("边框直线延长后与弧料圆没有交点");
+            }
+
+            var perpendicular = Math.Sqrt(Math.Max(0.0, remainder));
+            // The intersections lie along the line direction from the closest
+            // point. Using the normal collapses horizontal cut lines onto the
+            // circle's vertical diameter and can degenerate the arc band.
+            var px = ux * perpendicular;
+            var py = uy * perpendicular;
+            var first = new Point2D(closestX + px, closestY + py);
+            var second = new Point2D(closestX - px, closestY - py);
+            return DistanceSquared(first, preferred) <= DistanceSquared(second, preferred) ? first : second;
+        }
+
+        /// <summary>用精确偏移弧端替换离散轮廓中的采样弦端，保持各直边不漂移。</summary>
+        private static Polygon WithExactArcEnds(
+            Polygon sampledOutline,
+            IReadOnlyList<CurvedFramePiece> curvedPieces,
+            IReadOnlyList<bool> curvedEdges,
+            bool plateBoundary)
+        {
+            var count = sampledOutline.Vertices.Count;
+            var vertices = new List<Point2D>(sampledOutline.Vertices);
+            for (var i = 0; i < count; i++)
+            {
+                if (curvedEdges[i] && !curvedEdges[(i + count - 1) % count])
+                {
+                    var end = i;
+                    var arcEdgeCount = 0;
+                    do
+                    {
+                        arcEdgeCount++;
+                        end = (end + 1) % count;
+                    }
+                    while (curvedEdges[end] && end != i);
+
+                    var sampledStart = vertices[i];
+                    CurvedFramePiece matched = null;
+                    var bestDistance = double.MaxValue;
+                    CircularArc matchedArc = null;
+                    foreach (var piece in curvedPieces)
+                    {
+                        var candidate = plateBoundary ? piece.OutlinePlateArc : piece.OutlineNetArc;
+                        var dStart = DistanceSquared(sampledStart, candidate.Start);
+                        var dEnd = DistanceSquared(sampledStart, candidate.End);
+                        if (Math.Min(dStart, dEnd) < bestDistance)
+                        {
+                            bestDistance = Math.Min(dStart, dEnd);
+                            matched = piece;
+                            matchedArc = candidate;
+                        }
+                    }
+
+                    if (matched == null)
+                    {
+                        throw new ArgumentException("无法将离散弧边对应到整根弧料");
+                    }
+
+                    var direct = DistanceSquared(sampledStart, matchedArc.Start) <= DistanceSquared(sampledStart, matchedArc.End);
+                    for (var sample = 0; sample <= arcEdgeCount; sample++)
+                    {
+                        var vertexIndex = (i + sample) % count;
+                        var fraction = (double)sample / arcEdgeCount;
+                        vertices[vertexIndex] = matchedArc.PointAt(direct ? fraction : 1.0 - fraction);
+                    }
+                }
+            }
+
+            return new Polygon(vertices);
+        }
+
+        private static double DistanceSquared(Point2D a, Point2D b)
+        {
+            var dx = a.X - b.X;
+            var dy = a.Y - b.Y;
+            return dx * dx + dy * dy;
         }
 
         /// <summary>板件缺口：沿开口方向两端各加一个缩尺量，深度方向不动。</summary>
@@ -481,20 +890,23 @@ namespace SteelGrid.Core.Layout
             BarSpec barSpec,
             BandAxis axis,
             double netSpan,
-            double clearance)
+            double clearance,
+            bool curvedOutline)
         {
             var orientation = axis == BandAxis.Vertical ? "vertical" : "horizontal";
             var bars = new List<Bar>();
             for (var i = 0; i < centers.Count; i++)
             {
                 var center = centers[i];
-                var cuts = SubtractHoles(
-                    net.ClipBand(center, barSpec.Thickness / 2.0, axis),
-                    netHoles,
-                    center,
-                    barSpec.Thickness / 2.0,
-                    axis,
-                    clearance);
+                var cuts = curvedOutline
+                    ? net.ClipBandIntervals(center, barSpec.Thickness / 2.0, axis)
+                    : SubtractHoles(
+                        net.ClipBand(center, barSpec.Thickness / 2.0, axis),
+                        netHoles,
+                        center,
+                        barSpec.Thickness / 2.0,
+                        axis,
+                        clearance);
                 var segments = new List<Segment>();
                 foreach (var cut in cuts)
                 {

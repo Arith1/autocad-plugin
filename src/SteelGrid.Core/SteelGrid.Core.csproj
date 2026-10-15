@@ -41,6 +41,8 @@
     <Compile Include="Geometry\OutlineParser.cs" />
     <Compile Include="Geometry\OutlineGeometry.cs" />
     <Compile Include="Geometry\OutlineShape.cs" />
+    <Compile Include="Geometry\CircularArc.cs" />
+    <Compile Include="Geometry\CurvedFramePiece.cs" />
     <Compile Include="Geometry\PlateGeometry.cs" />
     <Compile Include="Geometry\PolygonFrameSplitter.cs" />
     <Compile Include="Geometry\RotatedPiece.cs" />
