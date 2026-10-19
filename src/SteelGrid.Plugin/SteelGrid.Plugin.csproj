@@ -21,7 +21,7 @@
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
-    <PluginVersion>3.03</PluginVersion>
+    <PluginVersion>3.04</PluginVersion>
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>bin\Release\v$(PluginVersion)\</OutputPath>
@@ -54,6 +54,7 @@
 
   <ItemGroup>
     <Compile Include="Commands\GridPluginCommands.cs" />
+    <Compile Include="Commands\GenericOffsetOutlineLayoutBuilder.cs" />
     <Compile Include="Commands\OutlineReader.cs" />
     <Compile Include="Commands\PluginTableRows.cs" />
     <Compile Include="Commands\PluginApplication.cs" />

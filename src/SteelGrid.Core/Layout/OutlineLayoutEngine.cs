@@ -232,6 +232,106 @@ namespace SteelGrid.Core.Layout
                 new LayoutResult(geometry, verticalBars, horizontalBars));
         }
 
+        /// <summary>
+        /// 使用插件侧已验证的通用偏移轮廓构建排条结果。
+        /// 外框和内框由 CAD 原生曲线偏移生成；此处复用既有孔位、斜边端距、边框料与报表模型。
+        /// </summary>
+        public static OutlineLayoutResult LayoutFromOffsetContours(
+            OutlineShape shape,
+            Spec spec,
+            Polygon plate,
+            Polygon net,
+            IReadOnlyList<bool> curvedFrameEdges,
+            IReadOnlyList<CurvedFramePiece> curvedFramePieces)
+        {
+            if (shape == null) throw new ArgumentNullException(nameof(shape));
+            if (spec == null) throw new ArgumentNullException(nameof(spec));
+            if (plate == null || plate.IsEmpty) throw new ArgumentException("缩尺外框无效", nameof(plate));
+            if (net == null || net.IsEmpty) throw new ArgumentException("边框内框无效", nameof(net));
+            if (plate.Count != net.Count)
+            {
+                throw new ArgumentException("外框与内框顶点无法一一对应，不能拆分边框料");
+            }
+
+            Validation.ValidateForOutline(spec);
+            var arcEdges = curvedFrameEdges == null ? new List<bool>() : new List<bool>(curvedFrameEdges);
+            var arcs = curvedFramePieces == null ? new List<CurvedFramePiece>() : new List<CurvedFramePiece>(curvedFramePieces);
+            if (arcEdges.Count != plate.Count)
+            {
+                throw new ArgumentException("弧段边标记与偏移轮廓顶点数不一致");
+            }
+
+            var verticalBars = BuildBars(
+                net,
+                new List<Polygon>(),
+                CenterPlacer.Place(net.Bounds.X0, net.Bounds.X1, spec.Vertical.Thickness, spec.Vertical.Pitch),
+                spec.Vertical,
+                BandAxis.Vertical,
+                net.Bounds.H,
+                spec.FrameT,
+                true);
+            var horizontalBars = BuildBars(
+                net,
+                new List<Polygon>(),
+                CenterPlacer.Place(net.Bounds.Y0, net.Bounds.Y1, spec.Horizontal.Thickness, spec.Horizontal.Pitch),
+                spec.Horizontal,
+                BandAxis.Horizontal,
+                net.Bounds.W,
+                spec.FrameT,
+                true);
+
+            if (CountSegments(verticalBars, horizontalBars) == 0)
+            {
+                throw new ArgumentException("内边框范围内没有足够空间放置横条或纵条");
+            }
+
+            foreach (var bar in verticalBars) BarHoles.Assign(bar, horizontalBars);
+            foreach (var bar in horizontalBars) BarHoles.Assign(bar, verticalBars);
+
+            var cutOrientation = spec.LoadDirection == LoadDirection.Vertical ? "horizontal" : "vertical";
+            ApplySlantHoleRule(verticalBars, horizontalBars, spec, false, cutOrientation);
+            ApplySlantHoleRule(horizontalBars, verticalBars, spec, true, cutOrientation);
+
+            foreach (var bar in verticalBars)
+            {
+                BarHoles.Assign(bar, horizontalBars);
+                RemoveTooCloseHoles(bar, spec);
+            }
+
+            foreach (var bar in horizontalBars)
+            {
+                BarHoles.Assign(bar, verticalBars);
+                RemoveTooCloseHoles(bar, spec);
+            }
+
+            var framePieces = PolygonFrameSplitter.GetPieces(
+                plate,
+                net,
+                spec.FrameT,
+                spec.LoadDirection,
+                arcEdges);
+            var geometry = new PlateGeometry(spec, plate.Bounds, net.Bounds, new List<NotchGeo>());
+            return new OutlineLayoutResult(
+                shape,
+                spec,
+                plate,
+                net,
+                new List<Polygon>(),
+                new List<Polygon>(),
+                arcs,
+                arcEdges,
+                framePieces,
+                new LayoutResult(geometry, verticalBars, horizontalBars));
+        }
+
+        private static int CountSegments(List<Bar> verticalBars, List<Bar> horizontalBars)
+        {
+            var count = 0;
+            foreach (var bar in verticalBars) count += bar.Segments.Count;
+            foreach (var bar in horizontalBars) count += bar.Segments.Count;
+            return count;
+        }
+
         /// <summary>半圆垂直受力：用较大半径侧的直边确定较小半径弧的端点。</summary>
         private static CircularArc AlignShorterArcToLongerBorderLines(
             CircularArc shorterArc,

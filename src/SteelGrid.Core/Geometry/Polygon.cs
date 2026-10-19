@@ -18,7 +18,7 @@ namespace SteelGrid.Core.Geometry
 
         public override string ToString()
         {
-            return X.ToString("0.###") + "," + Y.ToString("0.###");
+            return X.ToString("0.#") + "," + Y.ToString("0.#");
         }
     }
 

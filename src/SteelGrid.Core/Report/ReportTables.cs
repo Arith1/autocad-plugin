@@ -125,7 +125,7 @@ namespace SteelGrid.Core.Report
 
         public static string Format(double value)
         {
-            var text = value.ToString("0.00", CultureInfo.InvariantCulture)
+            var text = value.ToString("0.0", CultureInfo.InvariantCulture)
                 .TrimEnd('0')
                 .TrimEnd('.');
             return string.IsNullOrEmpty(text) ? "0" : text;

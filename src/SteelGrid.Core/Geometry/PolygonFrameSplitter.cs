@@ -47,6 +47,11 @@ namespace SteelGrid.Core.Geometry
                 horizontalFlags[i] = IsHorizontal(plate.Vertices[i], plate.Vertices[(i + 1) % count]);
             }
 
+            if (count == 3 && HasNoCurvedEdges(curvedEdges, count))
+            {
+                return GetTrianglePieces(plate, net, frameThickness, loadDirection, horizontalFlags);
+            }
+
             if (count == 4 && (All(horizontalFlags, true) || All(horizontalFlags, false)))
             {
                 var order = new List<int> { 0, 1, 2, 3 };
@@ -185,6 +190,116 @@ namespace SteelGrid.Core.Geometry
             }
 
             return pieces;
+        }
+
+        /// <summary>
+        /// 三角形按角分配包边关系。三条边无法用全局长/短二分让每个角都一长一短，
+        /// 因此每个顶点单独决定哪一侧延长，并分别计算每根料的起止端。
+        /// </summary>
+        private static List<RotatedPiece> GetTrianglePieces(
+            Polygon plate,
+            Polygon net,
+            double frameThickness,
+            LoadDirection loadDirection,
+            bool[] horizontalFlags)
+        {
+            var vertices = plate.Vertices;
+            var inner = net.Vertices;
+            var count = vertices.Count;
+            var wrappingEdgeAtCorner = new int[count];
+
+            // 顶点 i 由上一条边 i-1 与下一条边 i 共享。分类不同则让受力方向对应的
+            // 包边类别胜出；分类相同则按角度更接近包边方向者胜出，完全相同时固定选 i-1。
+            for (var corner = 0; corner < count; corner++)
+            {
+                var previous = (corner + count - 1) % count;
+                var next = corner;
+                if (horizontalFlags[previous] != horizontalFlags[next])
+                {
+                    var preferredHorizontal = loadDirection == LoadDirection.Vertical;
+                    wrappingEdgeAtCorner[corner] = horizontalFlags[previous] == preferredHorizontal
+                        ? previous
+                        : next;
+                }
+                else
+                {
+                    var previousDeviation = Deviation(plate, previous);
+                    var nextDeviation = Deviation(plate, next);
+                    var preferSmallerDeviation = loadDirection == LoadDirection.Vertical;
+                    var previousWins = preferSmallerDeviation
+                        ? previousDeviation <= nextDeviation + 1e-9
+                        : previousDeviation >= nextDeviation - 1e-9;
+                    wrappingEdgeAtCorner[corner] = previousWins ? previous : next;
+                }
+            }
+
+            var pieces = new List<RotatedPiece>(count);
+            for (var edge = 0; edge < count; edge++)
+            {
+                var next = (edge + 1) % count;
+                var outerA = vertices[edge];
+                var outerB = vertices[next];
+                var innerA = inner[edge];
+                var innerB = inner[next];
+                var dx = outerB.X - outerA.X;
+                var dy = outerB.Y - outerA.Y;
+                var outerLength = Math.Sqrt(dx * dx + dy * dy);
+                if (outerLength <= Tol)
+                {
+                    continue;
+                }
+
+                var ex = dx / outerLength;
+                var ey = dy / outerLength;
+                var nx = -ey;
+                var ny = ex;
+                var innerStart = (innerA.X - outerA.X) * ex + (innerA.Y - outerA.Y) * ey;
+                var innerEnd = (innerB.X - outerA.X) * ex + (innerB.Y - outerA.Y) * ey;
+                var wrapsAtStart = wrappingEdgeAtCorner[edge] == edge;
+                var wrapsAtEnd = wrappingEdgeAtCorner[next] == edge;
+
+                // 包边侧取角部投影较外的一端，被包侧取较内的一端；起止端独立处理，
+                // 允许同一根三角形边框料一端包边、另一端让位。
+                var start = wrapsAtStart ? Math.Min(0.0, innerStart) : Math.Max(0.0, innerStart);
+                var end = wrapsAtEnd
+                    ? Math.Max(outerLength, innerEnd)
+                    : Math.Min(outerLength, innerEnd);
+                var length = end - start;
+                if (length <= Tol)
+                {
+                    continue;
+                }
+
+                var center = new Point2D(
+                    outerA.X + ex * (start + end) / 2.0 + nx * frameThickness / 2.0,
+                    outerA.Y + ey * (start + end) / 2.0 + ny * frameThickness / 2.0);
+                var angle = Math.Atan2(dy, dx) * 180.0 / Math.PI;
+                while (angle <= -90.0) angle += 180.0;
+                while (angle > 90.0) angle -= 180.0;
+
+                pieces.Add(new RotatedPiece(
+                    edge,
+                    horizontalFlags[edge] ? "横向" : "纵向",
+                    center,
+                    length,
+                    frameThickness,
+                    angle,
+                    new Point2D(-nx, -ny)));
+            }
+
+            return pieces;
+        }
+
+        private static bool HasNoCurvedEdges(IReadOnlyList<bool> curvedEdges, int count)
+        {
+            if (curvedEdges == null) return true;
+            if (curvedEdges.Count != count) return false;
+            for (var i = 0; i < curvedEdges.Count; i++)
+            {
+                if (curvedEdges[i]) return false;
+            }
+
+            return true;
         }
 
         /// <summary>该顶点在逆时针轮廓里是不是凹角（缺口/缺角处）。</summary>

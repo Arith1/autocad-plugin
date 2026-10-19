@@ -267,7 +267,7 @@ namespace SteelGrid.Core.Layout
 
                     if (nearEdge || crosses)
                     {
-                        var text = $"距{edgeNames[edge]}缺口边框不足{clearance:0.##}mm，已{action}";
+                        var text = $"距{edgeNames[edge]}缺口边框不足{clearance:0.#}mm，已{action}";
                         if (!bar.Warnings.Contains(text))
                         {
                             bar.Warnings.Add(text);

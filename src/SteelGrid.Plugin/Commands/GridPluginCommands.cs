@@ -28,7 +28,7 @@ namespace SteelGrid.Plugin.Commands
         public static void ShowInfo()
         {
             var editor = GetEditor();
-            editor.WriteMessage("\n钢格板自动排条插件 3.03：GPGRID 正常排条；GPGRIDNOBORDER 将闭合轮廓直接作为排条区域，横条水平、纵条垂直，不缩尺、不生成边框料。");
+            editor.WriteMessage("\n钢格板自动排条插件 3.04：GPGRID 对未识别轮廓尝试通用边框偏移；GPGRIDNOBORDER 直接按闭合轮廓排条，横条水平、纵条垂直。");
         }
 
         [CommandMethod("GPGRIDSET")]
@@ -146,7 +146,7 @@ namespace SteelGrid.Plugin.Commands
                         {
                             var directLayout = BuildDirectOutlineLayout(outline);
                             editor.WriteMessage(
-                                "\n直接按闭合轮廓排条：局部 {0:0.##} x {1:0.##}，段数 {2}",
+                                "\n直接按闭合轮廓排条：局部 {0:0.#} x {1:0.#}，段数 {2}",
                                 directLayout.Plate.Bounds.W,
                                 directLayout.Plate.Bounds.H,
                                 directLayout.SegmentCount);
@@ -157,18 +157,7 @@ namespace SteelGrid.Plugin.Commands
                         var parsed = OutlineReader.ReadShape(outline);
                         if (!parsed.Supported)
                         {
-                            if (OutlineReader.HasArc(outline))
-                            {
-                                arcSkipped++;
-                                editor.WriteMessage("\n图形 {0} 跳过：弧形暂不支持（{1}）", id.Handle, parsed.Message);
-                            }
-                            else
-                            {
-                                invalidSkipped++;
-                                editor.WriteMessage("\n图形 {0} 跳过：无效轮廓（{1}）", id.Handle, parsed.Message);
-                            }
-
-                            continue;
+                            throw new ArgumentException("既有分类未覆盖该轮廓：" + parsed.Message);
                         }
 
                         if (parsed.Supported
@@ -177,7 +166,7 @@ namespace SteelGrid.Plugin.Commands
                         {
                             var outlineSpec = BuildSpec(outline, useSelectedOutlineAsNet);
                             editor.WriteMessage(
-                                "\n识别：{0}轮廓，局部 {1:0.##} x {2:0.##}，旋转 {3:0.##}°，受力 {4}",
+                                "\n识别：{0}轮廓，局部 {1:0.#} x {2:0.#}，旋转 {3:0.#}°，受力 {4}",
                                 parsed.Shape.Kind == OutlineKind.Trapezoid ? "梯形" : "平行四边形",
                                 parsed.Shape.Bounds.W,
                                 parsed.Shape.Bounds.H,
@@ -189,7 +178,7 @@ namespace SteelGrid.Plugin.Commands
 
                         var spec = BuildSpec(outline, useSelectedOutlineAsNet);
                         editor.WriteMessage(
-                            "\n识别：板件 {0:0.##} x {1:0.##}，缺口 {2} 个，受力 {3}",
+                            "\n识别：板件 {0:0.#} x {1:0.#}，缺口 {2} 个，受力 {3}",
                             spec.PlateW,
                             spec.PlateH,
                             spec.Notches.Count,
@@ -198,7 +187,7 @@ namespace SteelGrid.Plugin.Commands
                         {
                             var notch = spec.Notches[i];
                             editor.WriteMessage(
-                                "\n  缺口{0}：{1} 起 {2:0.##} 宽 {3:0.##} 深 {4:0.##}",
+                                "\n  缺口{0}：{1} 起 {2:0.#} 宽 {3:0.#} 深 {4:0.#}",
                                 i + 1,
                                 notch.Edge,
                                 notch.Start,
@@ -210,8 +199,27 @@ namespace SteelGrid.Plugin.Commands
                     }
                     catch (System.Exception ex)
                     {
-                        failed++;
-                        editor.WriteMessage("\n图形 {0} 识别或排条失败：{1}", id.Handle, ex.Message);
+                        try
+                        {
+                            var genericLayout = BuildGenericOffsetLayout(outline);
+                            editor.WriteMessage(
+                                "\n图形 {0} 使用通用偏移识别：直边框 {1} 根，弧形边框 {2} 根，横纵条段 {3}；原识别提示：{4}",
+                                id.Handle,
+                                genericLayout.FramePieces.Count,
+                                genericLayout.CurvedFramePieces.Count,
+                                genericLayout.SegmentCount,
+                                ex.Message);
+                            results.Add(new LayoutItem(genericLayout));
+                        }
+                        catch (System.Exception genericEx)
+                        {
+                            failed++;
+                            editor.WriteMessage(
+                                "\n图形 {0} 识别或排条失败：常规流程：{1}；通用偏移流程：{2}",
+                                id.Handle,
+                                ex.Message,
+                                genericEx.Message);
+                        }
                     }
                 }
 
@@ -429,6 +437,15 @@ namespace SteelGrid.Plugin.Commands
             }
 
             return DirectOutlineLayoutEngine.Layout(vertices, bulges, outline.Closed, spec);
+        }
+
+        private static OutlineLayoutResult BuildGenericOffsetLayout(Polyline outline)
+        {
+            var bounds = outline.Bounds.Value;
+            var width = bounds.MaxPoint.X - bounds.MinPoint.X;
+            var height = bounds.MaxPoint.Y - bounds.MinPoint.Y;
+            var spec = _savedSettings.ToSpec(width, height, new Notch[0]);
+            return GenericOffsetOutlineLayoutBuilder.Build(outline, spec);
         }
 
         private static Point3d GetOrigin(Polyline outline)
@@ -1306,7 +1323,7 @@ namespace SteelGrid.Plugin.Commands
             {
                 Position = new Point3d(x, y, 0.0),
                 Height = 18.0,
-                TextString = length.ToString("0.##"),
+                TextString = ReportTables.Format(length),
                 Layer = layer,
                 Rotation = vertical ? Math.PI / 2.0 : 0.0
             };
@@ -1769,6 +1786,13 @@ namespace SteelGrid.Plugin.Commands
             Point3d origin,
             string layer)
         {
+            if (IsFullCircle(piece.PlateArc) && IsFullCircle(piece.NetArc))
+            {
+                AppendMappedCircle(modelSpace, transaction, piece.PlateArc, shape, origin, layer);
+                AppendMappedCircle(modelSpace, transaction, piece.NetArc, shape, origin, layer);
+                return;
+            }
+
             var points = new[]
             {
                 piece.PlateArc.Start,
@@ -1821,6 +1845,18 @@ namespace SteelGrid.Plugin.Commands
                 {
                     startIndex = i;
                     break;
+                }
+            }
+
+            if (startIndex < 0 && curvedPieces != null && curvedPieces.Count == 1)
+            {
+                var fullArc = plateBoundary
+                    ? curvedPieces[0].OutlinePlateArc
+                    : curvedPieces[0].OutlineNetArc;
+                if (IsFullCircle(fullArc))
+                {
+                    AppendMappedCircle(modelSpace, transaction, fullArc, shape, origin, layer);
+                    return;
                 }
             }
 
@@ -1882,6 +1918,28 @@ namespace SteelGrid.Plugin.Commands
             polyline.Layer = layer;
             modelSpace.AppendEntity(polyline);
             transaction.AddNewlyCreatedDBObject(polyline, true);
+        }
+
+        private static bool IsFullCircle(CircularArc arc)
+        {
+            return arc != null && Math.Abs(Math.Abs(arc.SweepAngle) - 2.0 * Math.PI) <= 1e-4;
+        }
+
+        private static void AppendMappedCircle(
+            BlockTableRecord modelSpace,
+            Transaction transaction,
+            CircularArc arc,
+            OutlineShape shape,
+            Point3d origin,
+            string layer)
+        {
+            var center = MapPoint(shape, origin, arc.Center.X, arc.Center.Y);
+            var circle = new Circle(new Point3d(center.X, center.Y, 0.0), Vector3d.ZAxis, arc.Radius)
+            {
+                Layer = layer
+            };
+            modelSpace.AppendEntity(circle);
+            transaction.AddNewlyCreatedDBObject(circle, true);
         }
 
         private static double DistanceSquared(Point2D a, Point2D b)

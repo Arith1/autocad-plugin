@@ -32,7 +32,7 @@ namespace SteelGrid.Core.Model
 
         private static string Format(double value)
         {
-            return value.ToString("0.##");
+            return value.ToString("0.#");
         }
     }
 }
