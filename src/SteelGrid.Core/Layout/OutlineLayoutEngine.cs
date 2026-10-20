@@ -115,12 +115,18 @@ namespace SteelGrid.Core.Layout
                     }
                 }
 
-                curvedFramePieces.Add(new CurvedFramePiece(
+                var curvedPiece = new CurvedFramePiece(
                     plateArc,
                     netArc,
                     sign,
                     bandPlateArc,
-                    bandNetArc));
+                    bandNetArc);
+                if (shape.CurvedBoundaryCount == 1)
+                {
+                    curvedPiece = ArcFrameEndAligner.AlignConvexTangentEnds(curvedPiece,
+                        shape.CurvedArcs[arcIndex], rawOutline, curvedFrameEdges, spec.LoadDirection);
+                }
+                curvedFramePieces.Add(curvedPiece);
             }
 
             if (curvedFramePieces.Count > 0)
@@ -216,7 +222,8 @@ namespace SteelGrid.Core.Layout
                 spec.FrameT,
                 spec.LoadDirection,
                 curvedFrameEdges,
-                shape.CurvedBoundaryCount == 2);
+                shape.CurvedBoundaryCount == 2,
+                shape.ToWorld);
 
             var geometry = new PlateGeometry(spec, plate.Bounds, net.Bounds, new List<NotchGeo>());
             return new OutlineLayoutResult(
@@ -309,7 +316,9 @@ namespace SteelGrid.Core.Layout
                 net,
                 spec.FrameT,
                 spec.LoadDirection,
-                arcEdges);
+                arcEdges,
+                false,
+                shape.ToWorld);
             var geometry = new PlateGeometry(spec, plate.Bounds, net.Bounds, new List<NotchGeo>());
             return new OutlineLayoutResult(
                 shape,

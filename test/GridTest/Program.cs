@@ -17,6 +17,32 @@ namespace GridTest
         {
             try
             {
+                if (args.Length > 2 && (args[0] == "--arc-bars-snapshot" || args[0] == "--arc-stock-snapshot"))
+                {
+                    Environment.ExitCode = ArcFrameEndTest.CaptureLayouts(args[1], args[2], args[0] == "--arc-stock-snapshot");
+                    return;
+                }
+
+                if (args.Length > 0 && args[0] == "--arc-ends")
+                {
+                    Environment.ExitCode = ArcFrameEndTest.Run(
+                        args.Length > 1 ? args[1] : "test/GridTest/Fixtures/arc-43188.dxf",
+                        args.Length > 2 ? args[2] : "docs/svg/弧料43188修正");
+                    return;
+                }
+
+                if (args.Length > 1 && args[0] == "--bars-snapshot")
+                {
+                    Environment.ExitCode = BarRegressionSnapshot.Run(args[1]);
+                    return;
+                }
+
+                if (args.Length > 0 && args[0] == "--frame-wrap")
+                {
+                    Environment.ExitCode = FrameWrapTest.Run(args.Length > 1 ? args[1] : "docs/svg/frame-wrap");
+                    return;
+                }
+
                 if (args.Length > 0 && args[0] == "--geom")
                 {
                     Environment.ExitCode = PolygonSelfTest.Run() ? 0 : 1;

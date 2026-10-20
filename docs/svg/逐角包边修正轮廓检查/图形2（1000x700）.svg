@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<polygon points="60,816 1140,816 924,60 168,60" fill="none" stroke="#2e7d32" stroke-width="1.5"/>
+<polygon points="66.226,810.6 1132.841,810.6 919.927,65.4 172.683,65.4" fill="none" stroke="#d32f2f" stroke-width="2"/>
+<polygon points="72.453,805.2 1125.682,805.2 915.854,70.8 177.367,70.8" fill="none" stroke="#9e9e9e" stroke-width="1.5"/>
+<polygon points="66.226,810.6 1132.841,810.6 1132.841,805.2 66.226,805.2" fill="none" stroke="#1565c0" stroke-width="1.5"/>
+<text x="599.534" y="807.9" font-size="13" fill="#000000" text-anchor="middle">987.606</text>
+<polygon points="915.854,70.8 1125.682,805.2 1130.874,803.717 921.046,69.317" fill="none" stroke="#1565c0" stroke-width="1.5"/>
+<text x="1023.364" y="437.258" font-size="13" fill="#000000" text-anchor="middle">707.211</text>
+<polygon points="172.683,70.8 919.927,70.8 919.927,65.4 172.683,65.4" fill="none" stroke="#1565c0" stroke-width="1.5"/>
+<text x="546.305" y="68.1" font-size="13" fill="#000000" text-anchor="middle">691.892</text>
+<polygon points="72.453,805.2 177.367,70.8 172.021,70.036 67.107,804.436" fill="none" stroke="#1565c0" stroke-width="1.5"/>
+<text x="122.237" y="437.618" font-size="13" fill="#000000" text-anchor="middle">686.904</text>
+</svg>

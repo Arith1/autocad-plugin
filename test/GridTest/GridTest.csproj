@@ -31,6 +31,9 @@
   <ItemGroup>
     <Compile Include="DxfReader.cs" />
     <Compile Include="FrameSvg.cs" />
+    <Compile Include="FrameWrapTest.cs" />
+    <Compile Include="ArcFrameEndTest.cs" />
+    <Compile Include="BarRegressionSnapshot.cs" />
     <Compile Include="OutlineTest.cs" />
     <Compile Include="PolygonSelfTest.cs" />
     <Compile Include="Program.cs" />

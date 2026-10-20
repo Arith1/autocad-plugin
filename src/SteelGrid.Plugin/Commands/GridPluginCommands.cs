@@ -28,7 +28,7 @@ namespace SteelGrid.Plugin.Commands
         public static void ShowInfo()
         {
             var editor = GetEditor();
-            editor.WriteMessage("\n钢格板自动排条插件 3.04：GPGRID 对未识别轮廓尝试通用边框偏移；GPGRIDNOBORDER 直接按闭合轮廓排条，横条水平、纵条垂直。");
+            editor.WriteMessage("\n钢格板自动排条插件 3.06：GPGRID 逐角包边并修正近切线弧料平端；GPGRIDNOBORDER 直接按闭合轮廓排条，横条水平、纵条垂直。");
         }
 
         [CommandMethod("GPGRIDSET")]

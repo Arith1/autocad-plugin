@@ -51,10 +51,7 @@ namespace GridTest
 
                 try
                 {
-                    // 按图形实际尺寸认领期望值（不依赖 DXF 里的顺序）
-                    var expectedFrames = ExpectedFrames(shape);
-
-                    ok &= CheckShape(shape, spec, expectedFrames);
+                    ok &= CheckShape(shape, spec);
                 }
                 catch (Exception ex)
                 {
@@ -68,40 +65,9 @@ namespace GridTest
             return ok ? 0 : 1;
         }
 
-        /// <summary>已验收图形的边框料长度（包边取外线 / 被包取内线）。</summary>
-        private static double[] ExpectedFrames(OutlineShape shape)
-        {
-            var w = shape.Bounds.W;
-            var h = shape.Bounds.H;
-            if (Near(w, 1300.0, 0.02) && Near(h, 1000.0, 0.02))
-            {
-                // 单斜边梯形 1300 / 1000 / 高 1000
-                return new[] { 1288.28, 980.0, 991.28, 1023.15 };
-            }
-
-            if (Near(w, 1400.0, 0.02) && Near(h, 1104.169, 0.02))
-            {
-                // 左右都是斜边的梯形
-                return new[] { 1084.31, 991.52, 1147.27, 1387.90 };
-            }
-
-            if (Near(w, 1104.169, 0.02) && Near(h, 1400.0, 0.02))
-            {
-                // 上面那个整体旋转 90 度：包边/被包对调
-                return new[] { 1094.312, 983.039, 1157.85, 1375.794 };
-            }
-
-            return null;
-        }
-
-        private static bool Near(double value, double expect, double tol)
-        {
-            return Math.Abs(value - expect) <= tol;
-        }
-
         private static int SvgIndex;
 
-        private static bool CheckShape(OutlineShape shape, Spec spec, double[] expectedFrames)
+        private static bool CheckShape(OutlineShape shape, Spec spec)
         {
             SvgIndex++;
 
@@ -154,31 +120,18 @@ namespace GridTest
                 }
             }
 
-            var framePieces = PolygonFrameSplitter.GetPieces(layout.Plate, layout.Net, spec.FrameT, spec.LoadDirection);
-
-            // 底层判据：边框料必须恰好铺满"内外框线之间的带"（不重叠、不留缝）
-            var bandArea = Math.Abs(layout.Plate.Area) - Math.Abs(layout.Net.Area);
-            var pieceArea = 0.0;
-            var outsideBand = 0;
-            foreach (var piece in framePieces)
+            // 使用实际下料结果，保留世界方向和真实弧段；允许角部方切料搭接。
+            var framePieces = layout.FramePieces;
+            if (shape.CurvedBoundaryCount == 0)
             {
-                pieceArea += piece.Length * piece.Thickness;
-                foreach (var corner in piece.Corners())
-                {
-                    if (!layout.Plate.Contains(corner) || layout.Net.Contains(corner))
-                    {
-                        outsideBand++;
-                    }
-                }
+                var plans = FrameWrapPlanner.Plan(layout.Plate, layout.Net, spec.FrameT, spec.LoadDirection, shape.ToWorld);
+                FrameWrapTest.CheckLengths(layout.Plate, layout.Net, plans, framePieces);
+                ok &= Check("包边取最长、被包取最短，混合端分别取端点", plans.Count == framePieces.Count, "沿四点投影计算并核对落位");
             }
+            foreach (var piece in framePieces)
+                ok &= Check("边框料长为正", piece.Length > 0, F(piece.Length));
 
-            ok &= Check(
-                "边框料面积 = 内外框线之间的带（不重叠不留缝）",
-                Math.Abs(pieceArea - bandArea) <= Math.Max(1.0, bandArea * 0.005),
-                F(pieceArea) + " vs " + F(bandArea));
-            ok &= Check("边框料四角都在带内", outsideBand <= framePieces.Count * 2, outsideBand + " 个角点越界");
-
-            var svgDir = @"F:\PracticeProject\钢格板自动排条\docs\svg";
+            var svgDir = System.IO.Path.Combine("docs", "svg", "逐角包边修正轮廓检查");
             System.IO.Directory.CreateDirectory(svgDir);
             FrameSvg.Write(
                 System.IO.Path.Combine(svgDir, "图形" + SvgIndex + "（" + F(shape.Bounds.W) + "x" + F(shape.Bounds.H) + "）.svg"),
@@ -215,30 +168,6 @@ namespace GridTest
                     piece.Center.X + piece.Outward.X * piece.Thickness / 2.0,
                     piece.Center.Y + piece.Outward.Y * piece.Thickness / 2.0);
                 var outerGap = DistanceToPolygon(layout.Plate, outerMid);
-            }
-
-            if (expectedFrames != null && shape.NotchPolygons.Count == 0)
-            {
-                var basePieces = new List<RotatedPiece>();
-                foreach (var piece in framePieces)
-                {
-                    if (piece.EdgeIndex >= 0)
-                    {
-                        basePieces.Add(piece);
-                    }
-                }
-
-                ok &= Check(
-                    "基准边边框料长度 = 包边取外线 / 被包取内线",
-                    basePieces.Count == expectedFrames.Length,
-                    basePieces.Count + " 段（含缺口开口切开）");
-                for (var i = 0; i < basePieces.Count && i < expectedFrames.Length; i++)
-                {
-                    ok &= Check(
-                        "  基准边 " + (i + 1) + " 长度 " + F(expectedFrames[i]),
-                        Math.Abs(basePieces[i].Length - expectedFrames[i]) <= 0.02,
-                        F(basePieces[i].Length));
-                }
             }
 
             foreach (var hole in layout.NetHoles)

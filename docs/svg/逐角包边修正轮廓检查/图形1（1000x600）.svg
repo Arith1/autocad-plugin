@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<polygon points="60,708 1140,708 1140,60 60,60" fill="none" stroke="#2e7d32" stroke-width="1.5"/>
+<polygon points="65.4,702.6 1134.6,702.6 1134.6,65.4 65.4,65.4" fill="none" stroke="#d32f2f" stroke-width="2"/>
+<polygon points="70.8,697.2 1129.2,697.2 1129.2,70.8 70.8,70.8" fill="none" stroke="#9e9e9e" stroke-width="1.5"/>
+<polygon points="65.4,702.6 1134.6,702.6 1134.6,697.2 65.4,697.2" fill="none" stroke="#1565c0" stroke-width="1.5"/>
+<text x="600" y="699.9" font-size="13" fill="#000000" text-anchor="middle">990</text>
+<polygon points="1134.6,697.2 1134.6,70.8 1129.2,70.8 1129.2,697.2" fill="none" stroke="#1565c0" stroke-width="1.5"/>
+<text x="1131.9" y="384" font-size="13" fill="#000000" text-anchor="middle">580</text>
+<polygon points="65.4,70.8 1134.6,70.8 1134.6,65.4 65.4,65.4" fill="none" stroke="#1565c0" stroke-width="1.5"/>
+<text x="600" y="68.1" font-size="13" fill="#000000" text-anchor="middle">990</text>
+<polygon points="70.8,697.2 70.8,70.8 65.4,70.8 65.4,697.2" fill="none" stroke="#1565c0" stroke-width="1.5"/>
+<text x="68.1" y="384" font-size="13" fill="#000000" text-anchor="middle">580</text>
+</svg>

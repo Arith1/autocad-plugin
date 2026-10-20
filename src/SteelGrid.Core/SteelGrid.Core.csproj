@@ -44,8 +44,10 @@
     <Compile Include="Geometry\CircularArc.cs" />
     <Compile Include="Geometry\DirectOutlineLayoutEngine.cs" />
     <Compile Include="Geometry\CurvedFramePiece.cs" />
+    <Compile Include="Geometry\ArcFrameEndAligner.cs" />
     <Compile Include="Geometry\PlateGeometry.cs" />
     <Compile Include="Geometry\PolygonFrameSplitter.cs" />
+    <Compile Include="Geometry\FrameWrapPlanner.cs" />
     <Compile Include="Geometry\RotatedPiece.cs" />
     <Compile Include="Geometry\Polygon.cs" />
     <Compile Include="Geometry\Rect.cs" />

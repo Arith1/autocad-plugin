@@ -22,6 +22,7 @@ namespace SteelGrid.Plugin.Commands
             public List<Point2D> NetPoints;
             public List<bool> CurvedEdges;
             public List<Tuple<CircularArc, CircularArc, CircularArc>> Arcs;
+            public List<Tuple<Point2D, Point2D>> ArcNeighbors;
             public double Winding;
         }
 
@@ -85,7 +86,7 @@ namespace SteelGrid.Plugin.Commands
                     }
                 }
 
-                var curvedPieces = BuildCurvedPieces(paired, shape);
+                var curvedPieces = BuildCurvedPieces(paired, shape, spec.LoadDirection);
                 return OutlineLayoutEngine.LayoutFromOffsetContours(
                     shape,
                     spec,
@@ -266,6 +267,7 @@ namespace SteelGrid.Plugin.Commands
                 NetPoints = new List<Point2D>(),
                 CurvedEdges = new List<bool>(),
                 Arcs = new List<Tuple<CircularArc, CircularArc, CircularArc>>(),
+                ArcNeighbors = new List<Tuple<Point2D, Point2D>>(),
                 Winding = Math.Sign(SignedArea(Sample(source)))
             };
 
@@ -322,6 +324,9 @@ namespace SteelGrid.Plugin.Commands
                 }
 
                 result.Arcs.Add(Tuple.Create(sourceArc, plateArc, netArc));
+                result.ArcNeighbors.Add(Tuple.Create(
+                    GetPoint(source, (i + edgeCount - 1) % edgeCount),
+                    GetPoint(source, (i + 2) % edgeCount)));
             }
 
             if (result.PlatePoints.Count < 3 || result.PlatePoints.Count != result.NetPoints.Count)
@@ -347,7 +352,7 @@ namespace SteelGrid.Plugin.Commands
             }
         }
 
-        private static List<CurvedFramePiece> BuildCurvedPieces(PairedContours contours, OutlineShape shape)
+        private static List<CurvedFramePiece> BuildCurvedPieces(PairedContours contours, OutlineShape shape, LoadDirection direction)
         {
             var result = new List<CurvedFramePiece>();
             var sourceArcs = contours.Arcs;
@@ -378,10 +383,17 @@ namespace SteelGrid.Plugin.Commands
                     sign = (int)(-Math.Sign(item.Item1.SweepAngle) * contours.Winding);
                 }
 
-                result.Add(new CurvedFramePiece(
+                var piece = new CurvedFramePiece(
                     ToLocal(item.Item2, shape),
                     ToLocal(item.Item3, shape),
-                    sign));
+                    sign);
+                if (sourceArcs.Count == 1)
+                {
+                    var neighbors = contours.ArcNeighbors[0];
+                    piece = ArcFrameEndAligner.AlignConvexTangentEnds(piece, ToLocal(item.Item1, shape),
+                        shape.ToLocal(neighbors.Item1), shape.ToLocal(neighbors.Item2), direction);
+                }
+                result.Add(piece);
             }
 
             return result;
